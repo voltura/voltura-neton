@@ -4,7 +4,11 @@ The .NET 10 port of [NetOn by Voltura AB](https://github.com/voltura/VolturaTool
 
 ## Use
 
-Run `publish\Voltura.NetOn.exe` and accept the administrator prompt once. NetOn stays elevated until Exit, so subsequent ON/OFF clicks do not prompt again. NetOn starts in the system tray, as the original did:
+Install the **[.NET 10 Desktop Runtime for Windows x64](https://dotnet.microsoft.com/en-us/download/dotnet/10.0)** first. The regular .NET runtime alone does not include Windows Forms.
+
+Download the **[Windows installer](https://github.com/voltura/voltura-neton/releases/latest)** and run the Setup EXE. It checks the runtime prerequisite and installs NetOn, Start-menu shortcuts, and an uninstaller. A desktop shortcut is optional. The smaller ZIP is also available for portable use. Neither package bundles .NET or `createdump.exe`.
+
+Open NetOn from the Start menu, or run `Voltura.NetOn.exe` from an extracted portable package, and accept the administrator prompt once. NetOn stays elevated until Exit, so subsequent ON/OFF clicks do not prompt again. NetOn starts in the system tray, as the original did:
 
 - **Green ON icon:** at least one network adapter is enabled; network access is allowed.
 - **Red OFF icon:** all discovered network adapters are confirmed disabled.
@@ -30,10 +34,21 @@ Requires Windows 10/11 and the .NET 10 SDK. Windows PowerShell's NetAdapter modu
 
 ```powershell
 dotnet build -c Release
-dotnet publish -c Release -r win-x64 --self-contained true -o publish
+dotnet publish -c Release -r win-x64 --self-contained false -o publish
 ```
 
-The self-contained `publish` folder includes the runtime. Keep its files together. User preferences are stored in `%LOCALAPPDATA%\Voltura\NetOn\preferences.json`; the startup option uses the current user's Windows Run key.
+The framework-dependent `publish` folder requires the separately installed .NET 10 Desktop Runtime x64. Keep its files together and publish into a fresh folder when changing deployment types. User preferences are stored in `%LOCALAPPDATA%\Voltura\NetOn\preferences.json`; the startup option uses the current user's Windows Run key.
+
+Build release packages with [NSIS](https://nsis.sourceforge.io/) installed:
+
+```powershell
+.\scripts\build-release.ps1
+.\scripts\verify-installer.ps1
+```
+
+Release files are placed in `artifacts\release-1.0.3-framework`. The build creates a fresh framework-dependent payload, checks that runtime binaries are absent, builds the installer, and creates the portable ZIP. No checksum files are generated; GitHub provides asset digests.
+
+The installer is per-user and does not launch NetOn automatically. Uninstall removes only the packaged files and installer integration, preserving preferences and unrelated files. The verification script tests silent installation, upgrade, uninstall, and rejection of a missing runtime, without launching NetOn or changing adapter state. It refuses to overwrite an existing installation during these checks.
 
 External IP lookup uses `https://api.ipify.org` over HTTPS with a four-second timeout. Failure or lack of internet does not block adapter controls or Exit. Toggling and discovery work offline.
 
