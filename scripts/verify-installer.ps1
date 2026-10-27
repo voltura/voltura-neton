@@ -38,9 +38,26 @@ if ($originalPreferences -ne $afterPreferences) { throw 'Installer changed appli
 Write-Output 'PASS: uninstall removes product files, registry entry, and shortcuts; preserves preferences and unrelated files'
 $probe = Join-Path $releaseRoot 'MissingRuntimeProbe.exe'
 $missingRoot = Join-Path $testRoot 'no-runtime'
-& 'C:\Program Files (x86)\NSIS\makensis.exe' /V2 "/DAPP_VERSION=$Version" "/DOUTPUT_FILE=$probe" "/DINSTALL_FILES=$releaseRoot\install-files.nsh" "/DUNINSTALL_FILES=$releaseRoot\uninstall-files.nsh" "/DTEST_RUNTIME_ROOT=$missingRoot" (Join-Path $netonRoot 'installer\NetOn.nsi')
+$stub = Join-Path $testRoot 'runtime-helper-test.ps1'
+'exit 1603' | Set-Content -LiteralPath $stub
+& 'C:\Program Files (x86)\NSIS\makensis.exe' /V2 "/DAPP_VERSION=$Version" "/DOUTPUT_FILE=$probe" "/DINSTALL_FILES=$releaseRoot\install-files.nsh" "/DUNINSTALL_FILES=$releaseRoot\uninstall-files.nsh" "/DTEST_RUNTIME_ROOT=$missingRoot" "/DTEST_RUNTIME_HELPER=$stub" (Join-Path $netonRoot 'installer\NetOn.nsi')
 if ($LASTEXITCODE -ne 0) { throw 'Missing-runtime probe build failed' }
 $failedInstallRoot = Join-Path $testRoot 'must-not-install'
 $missing = Start-Process -FilePath $probe -ArgumentList @('/S', "/D=$failedInstallRoot") -WindowStyle Hidden -PassThru -Wait
 if ($missing.ExitCode -ne 1603 -or (Test-Path -LiteralPath $failedInstallRoot) -or (Test-Path -LiteralPath $uninstallKey)) { throw 'Missing-runtime prerequisite check failed' }
-Write-Output 'PASS: installer refuses to install without .NET 10 Desktop Runtime x64 (exit 1603)'
+Write-Output 'PASS: component setup failure prevents installation (exit 1603)'
+$fakeDesktop = Join-Path $missingRoot 'shared\Microsoft.WindowsDesktop.App\10.0.99'
+@"
+New-Item -ItemType Directory -Path '$fakeDesktop' -Force | Out-Null
+'Test marker only.' | Set-Content -LiteralPath '$fakeDesktop\System.Windows.Forms.dll'
+exit 0
+"@ | Set-Content -LiteralPath $stub
+& 'C:\Program Files (x86)\NSIS\makensis.exe' /V2 "/DAPP_VERSION=$Version" "/DOUTPUT_FILE=$probe" "/DINSTALL_FILES=$releaseRoot\install-files.nsh" "/DUNINSTALL_FILES=$releaseRoot\uninstall-files.nsh" "/DTEST_RUNTIME_ROOT=$missingRoot" "/DTEST_RUNTIME_HELPER=$stub" (Join-Path $netonRoot 'installer\NetOn.nsi')
+if ($LASTEXITCODE -ne 0) { throw 'Automatic-component-setup probe build failed' }
+$completed = Start-Process -FilePath $probe -ArgumentList @('/S', "/D=$failedInstallRoot") -WindowStyle Hidden -PassThru -Wait
+if ($completed.ExitCode -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $failedInstallRoot 'Voltura.NetOn.exe'))) { throw 'Installer did not continue after component setup' }
+Start-Process -FilePath (Join-Path $failedInstallRoot 'Uninstall.exe') -ArgumentList '/S' -WindowStyle Hidden -Wait
+$deadline = [DateTime]::UtcNow.AddSeconds(15)
+while ((Test-Path -LiteralPath $uninstallKey) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 200 }
+if (Test-Path -LiteralPath $uninstallKey) { throw 'Automatic-setup probe uninstall failed' }
+Write-Output 'PASS: missing component starts the setup helper, rechecks availability, and continues installation'

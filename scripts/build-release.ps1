@@ -14,10 +14,8 @@ foreach ($name in $forbidden) { if (Test-Path -LiteralPath (Join-Path $payload $
 @'
 Voltura NetOn
 
-Prerequisite: .NET 10 Desktop Runtime for Windows x64.
-https://dotnet.microsoft.com/en-us/download/dotnet/10.0
-
-Install with the Setup EXE, or extract all ZIP files together and run Voltura.NetOn.exe.
+Run the Setup EXE and follow the instructions, then open NetOn from the Start menu.
+The portable ZIP requires .NET 10 Desktop Runtime x64 to be installed separately.
 Accept the administrator prompt once when NetOn starts.
 Left-click the tray icon to toggle internet access across all adapters.
 Right-click for network details, settings, and Exit NetOn.

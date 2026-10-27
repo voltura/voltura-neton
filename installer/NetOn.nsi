@@ -36,6 +36,7 @@ VIAddVersionKey "LegalCopyright" "Voltura AB"
 !insertmacro MUI_LANGUAGE "English"
 Var RuntimeRoot
 Var RuntimeFound
+Var RuntimeExitCode
 Function CheckDesktopRuntime
   StrCpy $RuntimeFound 0
   FindFirst $0 $1 "$RuntimeRoot\shared\Microsoft.WindowsDesktop.App\10.0.*"
@@ -74,13 +75,47 @@ Function .onInit
     ${EndIf}
   !endif
   Call CheckDesktopRuntime
-  ${If} $RuntimeFound != 1
-    IfSilent runtime_missing_silent
-    MessageBox MB_YESNO|MB_ICONINFORMATION "Install the .NET 10 Desktop Runtime for Windows x64 before installing NetOn.$\r$\n$\r$\nOpen Microsoft's download page now?" IDNO runtime_missing_silent
-    ExecShell "open" "https://dotnet.microsoft.com/en-us/download/dotnet/10.0"
-runtime_missing_silent:
+FunctionEnd
+
+Function EnsureDesktopRuntime
+  ${If} $RuntimeFound == 1
+    Return
+  ${EndIf}
+  DetailPrint "Setting up required Windows components..."
+  InitPluginsDir
+  SetOutPath "$PLUGINSDIR"
+  !ifdef TEST_RUNTIME_HELPER
+    File "/oname=install-runtime.ps1" "${TEST_RUNTIME_HELPER}"
+  !else
+    File "/oname=install-runtime.ps1" "..\scripts\install-runtime.ps1"
+  !endif
+  nsExec::ExecToLog '$\"$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe$\" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $\"$PLUGINSDIR\install-runtime.ps1$\"'
+  Pop $RuntimeExitCode
+  ${If} $RuntimeExitCode == 1223
+    IfSilent runtime_canceled
+    MessageBox MB_OK|MB_ICONINFORMATION "Setup was canceled. NetOn has not been installed."
+runtime_canceled:
+    SetErrorLevel 1223
+    Quit
+  ${EndIf}
+  ${If} $RuntimeExitCode != 0
+  ${AndIf} $RuntimeExitCode != 3010
+    IfSilent runtime_failed
+    MessageBox MB_OK|MB_ICONSTOP "Setup could not finish. Check your internet connection and try again."
+runtime_failed:
     SetErrorLevel 1603
     Quit
+  ${EndIf}
+  Call CheckDesktopRuntime
+  ${If} $RuntimeFound != 1
+    IfSilent runtime_unavailable
+    MessageBox MB_OK|MB_ICONINFORMATION "Restart Windows, then run Setup again to finish installing NetOn."
+runtime_unavailable:
+    SetErrorLevel 3010
+    Quit
+  ${EndIf}
+  ${If} $RuntimeExitCode == 3010
+    SetRebootFlag true
   ${EndIf}
 FunctionEnd
 !macro CheckClosed PREFIX
@@ -100,6 +135,7 @@ ${PREFIX}ready:
 Section "Voltura NetOn (required)" MainSection
   SectionIn RO
   !insertmacro CheckClosed "install_"
+  Call EnsureDesktopRuntime
   !include "${INSTALL_FILES}"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteRegStr HKCU "Software\Voltura\NetOn\Installer" "InstallDir" "$INSTDIR"
