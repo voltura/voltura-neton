@@ -59,42 +59,21 @@ internal static class Program
         Directory.CreateDirectory(directory);
         foreach (string text in new[] { "Internet enabled", "Internet disabled" })
         {
-            dynamic voice = Activator.CreateInstance(Type.GetTypeFromProgID("SAPI.SpVoice")!)!;
-            dynamic stream = Activator.CreateInstance(Type.GetTypeFromProgID("SAPI.SpFileStream")!)!;
-            string path = Path.Combine(directory, text.Replace(' ', '-') + ".wav");
-            try
-            {
-                stream.Format.Type = 22; // 22.05 kHz, 16-bit mono.
-                stream.Open(path, 3, false);
-                voice.AudioOutputStream = stream;
-                voice.Speak(Speech.BuildPrompt(text), 8);
-                stream.Close();
-                using var input = new BinaryReader(File.OpenRead(path));
-                input.ReadBytes(12);
-                int rate = 0;
-                byte[]? samples = null;
-                while (input.BaseStream.Position + 8 <= input.BaseStream.Length)
-                {
-                    string chunk = System.Text.Encoding.ASCII.GetString(input.ReadBytes(4));
-                    int size = input.ReadInt32();
-                    long next = input.BaseStream.Position + size + (size & 1);
-                    if (chunk == "fmt ") { input.ReadInt16(); input.ReadInt16(); rate = input.ReadInt32(); }
-                    if (chunk == "data") samples = input.ReadBytes(size);
-                    input.BaseStream.Position = next;
-                }
-                if (samples == null || rate == 0) throw new Exception("Speech output was not a PCM WAV");
-                int initialBytes = rate * 2 * 600 / 1000;
-                Require(samples.Length > initialBytes && samples.Take(initialBytes).All(b => b == 0), text + " starts with at least 600 ms of audio-stream silence");
-                Require(samples.Skip(initialBytes).Any(b => b != 0), text + " is synthesized after the lead-in (without playing audio)");
-            }
-            finally
-            {
-                System.Runtime.InteropServices.Marshal.FinalReleaseComObject(voice);
-                System.Runtime.InteropServices.Marshal.FinalReleaseComObject(stream);
-            }
+            byte[] wave = Speech.RenderWave(text);
+            File.WriteAllBytes(Path.Combine(directory, text.Replace(' ', '-') + ".wav"), wave);
+            using var input = new BinaryReader(new MemoryStream(wave));
+            Require(System.Text.Encoding.ASCII.GetString(input.ReadBytes(4)) == "RIFF", "speech is rendered as a WAV stream");
+            input.BaseStream.Position = 24;
+            int rate = input.ReadInt32();
+            Require(rate == Speech.SampleRate, "cue and speech share the expected PCM sample rate");
+            int cueBytes = rate * 2 * Speech.CueMilliseconds / 1000;
+            var cue = wave.Skip(44).Take(cueBytes).ToArray();
+            Require(cue.Take(rate * 2 / 2).Any(b => b != 0), text + " begins with real audio, not discarded digital silence");
+            Require(cue.Skip(cueBytes - rate / 5).Any(b => b != 0), "wake-up cue continues until the speech lead-in");
+            Require(wave.Skip(44 + cueBytes).Any(b => b != 0), "complete phrase follows in the same WAV stream");
+            Require(wave.Length > 44 + cueBytes + rate, "speech has at least half a second of audio after the cue");
         }
     }
-
     private static void CheckIcons()
     {
         var settings = new AppSettings();

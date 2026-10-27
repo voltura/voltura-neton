@@ -70,7 +70,7 @@ internal sealed class MainForm : Form
         menu.Items.Add("About NetOn", null, (_, _) =>
         {
             Say("NetOn by Voltura AB");
-            MessageBox.Show(this, "NetOn by Voltura AB\nVersion 1.0.2 • .NET 10\nhttps://github.com/voltura/voltura-neton\n\nFree for all.", "About NetOn", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, "NetOn by Voltura AB\nVersion 1.0.3 • .NET 10\nhttps://github.com/voltura/voltura-neton\n\nFree for all.", "About NetOn", MessageBoxButtons.OK, MessageBoxIcon.Information);
         });
         menu.Items.Add("Network adapters…", null, (_, _) => ShowWindow());
         menu.Items.Add(trayToggle);

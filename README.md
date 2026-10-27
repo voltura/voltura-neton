@@ -16,7 +16,7 @@ OFF disables all enabled network adapters, including Ethernet, Wi-Fi, Bluetooth 
 
 The dropdown under **Network adapters…** selects the adapter whose details you view; it does not limit the global ON/OFF action. A connected adapter is selected initially, and your detail selection is remembered by GUID.
 
-The original speech announcements, mute setting, customizable icon colors, reset colors, start-with-Windows setting, external-IP tooltip/copying, About, and tray toggle are included. Speech includes 650 ms of leading audio-stream silence to allow the output device to wake before speaking. The default ON background is green as requested, with red for OFF. Color settings are available for both states.
+The original speech announcements, mute setting, customizable icon colors, reset colors, start-with-Windows setting, external-IP tooltip/copying, About, and tray toggle are included. Speech begins with a quiet 1.2-second audible cue, followed by the complete phrase in the same audio stream. This wakes outputs that discard digital silence. An active phrase finishes before the latest pending announcement plays. The default ON background is green as requested, with red for OFF. Color settings are available for both states.
 
 Windows requires administrator rights to change adapter state. The launcher requests elevation at startup; canceling that prompt exits without making network changes. The startup registration uses the launcher, which also requests elevation when launched at sign-in. There are no per-toggle elevation helpers.
 
