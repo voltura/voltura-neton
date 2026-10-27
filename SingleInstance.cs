@@ -10,7 +10,8 @@ internal sealed class SingleInstance : IDisposable
     private readonly bool ownsMutex;
     private RegisteredWaitHandle? listener;
     private RegisteredWaitHandle? exitListener;
-    public bool IsPrimary => ownsMutex;
+    private bool disposed;
+    public bool IsPrimary => !disposed && ownsMutex;
 
     public SingleInstance(string? name = null)
     {
@@ -27,6 +28,8 @@ internal sealed class SingleInstance : IDisposable
     public void ListenForExit(Action close) => exitListener = ThreadPool.RegisterWaitForSingleObject(exit, (_, _) => close(), null, Timeout.Infinite, false);
     public void Dispose()
     {
+        if (disposed) return;
+        disposed = true;
         listener?.Unregister(null);
         exitListener?.Unregister(null);
         activate.Dispose();

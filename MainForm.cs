@@ -15,6 +15,9 @@ internal sealed class MainForm : Form
     private readonly TableLayoutPanel connectionDetails = new() { Name = "ConnectionDetails", AutoSize = true, Dock = DockStyle.Top, ColumnCount = 1, RowCount = 2, Margin = Padding.Empty };
     private readonly ModernButton detailsToggle = new() { Name = "DetailsToggle", Text = "Show connection details", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Quiet = true, Size = new Size(230, 36), MinimumSize = Size.Empty, Margin = new Padding(0, 6, 0, 6) };
     private readonly Func<CancellationToken, Task<string>> externalIpLookup;
+    private readonly Action<string> copyExternalIp;
+    private readonly Func<bool> adapterListOpen;
+    private readonly Action persistPreferences;
     private readonly Label status = new() { AutoSize = true, Text = "Checking…", Font = new Font("Segoe UI", 23, FontStyle.Regular), Margin = new Padding(0, 17, 0, 0) };
     private readonly SwitchGlyph stateGlyph = new() { Name = "MainSwitch", Margin = new Padding(0, 0, 4, 0), Size = new Size(90, 75) };
     private readonly Label stateDescription = new() { AutoSize = true, MaximumSize = new Size(420, 0), Font = new Font("Segoe UI", 10), ForeColor = AppTheme.Muted, Margin = new Padding(0, 1, 0, 6) };
@@ -28,6 +31,8 @@ internal sealed class MainForm : Form
     private readonly ToolTip hints = new();
     private SettingsForm? settingsWindow;
     private bool detailsExpanded;
+    private bool discoveryError;
+    private int ipGeneration;
     private bool readingIp;
     private DateTimeOffset nextIpRead;
     private readonly NotifyIcon tray;
@@ -35,7 +40,7 @@ internal sealed class MainForm : Form
     private Bitmap? menuSwitchImage;
     private bool? menuSwitchState;
     private bool menuSwitchRendered;
-    private readonly NetworkSchedule schedule = new();
+    private readonly NetworkSchedule schedule;
     private readonly ToolStripMenuItem scheduleSummary = new("No scheduled change") { Enabled = false };
     private readonly ToolStripMenuItem cancelSchedule = new("Cancel scheduled change") { Enabled = false };
     private readonly ToolStripMenuItem copyIp = new("Copy external IP");
@@ -45,19 +50,25 @@ internal sealed class MainForm : Form
     private bool refreshing, changing, exiting, rebinding, showRequested, hasSnapshot;
     private int operationVersion;
     private bool? announcedState;
+    private FormWindowState restoreState = FormWindowState.Normal;
     private string externalIp = "";
-    private Adapter? Selected => adapters.SelectedItem as Adapter;
+    private Adapter? Selected => adapters.SelectedItem is Adapter item ? snapshot.FirstOrDefault(a => a.Id == item.Id) : null;
     [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
 
-    public MainForm(IAdapterService? service = null, AppSettings? settings = null, bool desktopFeatures = true, Func<CancellationToken, Task<string>>? externalIpLookup = null)
+    public MainForm(IAdapterService? service = null, AppSettings? settings = null, bool desktopFeatures = true, Func<CancellationToken, Task<string>>? externalIpLookup = null, Action<string>? copyExternalIp = null, Func<bool>? adapterListOpen = null, Action? savePreferences = null, TimeProvider? timeProvider = null)
     {
         this.service = service ?? new NetworkAdapters();
+        schedule = new NetworkSchedule(timeProvider);
         this.externalIpLookup = externalIpLookup ?? LookupExternalIpAsync;
+        this.copyExternalIp = copyExternalIp ?? Clipboard.SetText;
+        this.adapterListOpen = adapterListOpen ?? (() => adapters.DroppedDown);
         preferences = settings ?? AppSettings.Load();
+        persistPreferences = savePreferences ?? (() => { if (desktopFeatures) preferences.Save(); });
+        preferences.Normalize();
         AppTheme.Set(preferences.Theme);
         speech = new Speech(() => preferences.VoiceId);
         this.desktopFeatures = desktopFeatures;
-        internetSwitch = new InternetSwitch(this.service, preferences, () => { if (desktopFeatures) preferences.Save(); });
+        internetSwitch = new InternetSwitch(this.service, preferences, persistPreferences);
         onIcon = StatusIcons.Create(true, preferences);
         offIcon = StatusIcons.Create(false, preferences);
         unknownIcon = StatusIcons.Create(null, preferences);
@@ -83,27 +94,26 @@ internal sealed class MainForm : Form
         heading.Controls.Add(new Label { Text = "NetOn", AutoSize = true, Font = new Font("Segoe UI", 25, FontStyle.Bold), Margin = new Padding(0, 0, 15, 0) });
         heading.Controls.Add(new Label { Text = "by Voltura", AutoSize = true, ForeColor = AppTheme.Muted, Font = new Font("Segoe UI", 9), Margin = new Padding(0, 20, 0, 0) });
         root.Controls.Add(heading, 0, 0);
-        var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 1, Margin = Padding.Empty };
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        var content = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 9, Margin = new Padding(0, 3, 0, 0) };
+        var body = new Panel { Name = "MainScroll", Dock = DockStyle.Fill, AutoScroll = true, Margin = Padding.Empty };
+        var content = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 9, Margin = new Padding(0, 3, 0, 0) };
         content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int row = 0; row < 9; row++) content.RowStyles.Add(new RowStyle(row == 8 ? SizeType.Percent : SizeType.AutoSize, row == 8 ? 100 : 0));
-        content.Controls.Add(new Label { Text = "YOUR INTERNET CONNECTION", ForeColor = AppTheme.Muted, Font = new Font("Segoe UI", 8, FontStyle.Bold), AutoSize = true, Margin = new Padding(0, 2, 0, 5) });
+        for (int row = 0; row < 9; row++) content.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        content.Controls.Add(new Label { Text = "YOUR INTERNET CONNECTION", ForeColor = AppTheme.Muted, Font = new Font("Segoe UI", 8, FontStyle.Bold), AutoSize = true, Margin = new Padding(0, 2, 0, 5) }, 0, 0);
         var stateRow = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = false, Margin = Padding.Empty };
         stateRow.Controls.Add(stateGlyph);
         stateRow.Controls.Add(status);
-        content.Controls.Add(stateRow);
-        content.Controls.Add(stateDescription);
+        content.Controls.Add(stateRow, 0, 1);
+        content.Controls.Add(stateDescription, 0, 2);
         var buttons = new TableLayoutPanel { Name = "ToggleButtons", AutoSize = true, Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(0, 6, 0, 18) };
         buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         turnOn.Dock = turnOff.Dock = DockStyle.Fill;
         turnOn.Margin = new Padding(0, 0, 8, 0); turnOff.Margin = Padding.Empty;
         buttons.Controls.Add(turnOn, 0, 0); buttons.Controls.Add(turnOff, 1, 0);
-        content.Controls.Add(buttons);
+        content.Controls.Add(buttons, 0, 3);
         var ipRow = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(0, 0, 0, 8) };
         ipRow.Controls.AddRange([externalIpLabel, copyIpButton]);
-        content.Controls.Add(ipRow);
-        content.Controls.Add(detailsToggle);
+        content.Controls.Add(ipRow, 0, 4);
+        content.Controls.Add(detailsToggle, 0, 5);
         connectionDetails.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         connectionDetails.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         connectionDetails.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -113,11 +123,11 @@ internal sealed class MainForm : Form
         connectionDetails.Visible = false;
         detailsToggle.Text = "Show connection details";
         detailsToggle.Click += (_, _) => SetConnectionDetails(!detailsExpanded);
-        content.Controls.Add(connectionDetails);
+        content.Controls.Add(connectionDetails, 0, 6);
         hints.SetToolTip(copyIpButton, "Copy external IP address");
-        content.Controls.Add(error);
-        content.Controls.Add(new Label { Text = "Switches all network connections.", AutoSize = true, ForeColor = AppTheme.Muted, Font = new Font("Segoe UI", 9), Margin = new Padding(0, 12, 0, 0) });
-        body.Controls.Add(content, 0, 0);
+        content.Controls.Add(error, 0, 7);
+        content.Controls.Add(new Label { Text = "Switches all network connections.", AutoSize = true, ForeColor = AppTheme.Muted, Font = new Font("Segoe UI", 9), Margin = new Padding(0, 12, 0, 0) }, 0, 8);
+        body.Controls.Add(content);
         root.Controls.Add(body, 0, 1);
         var footer = new TableLayoutPanel { Name = "MainFooter", Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1, Margin = new Padding(0, 16, 0, 0) };
         for (int i = 0; i < 4; i++) footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
@@ -166,7 +176,7 @@ internal sealed class MainForm : Form
         var startup = new ToolStripMenuItem("Start with Windows") { Tag = "startup", Checked = desktopFeatures && AppSettings.StartWithWindows };
         startup.Click += (_, _) =>
         {
-            try { AppSettings.StartWithWindows = !startup.Checked; startup.Checked = AppSettings.StartWithWindows; Say(startup.Checked ? "NetOn set to start with Windows" : "NetOn will not start with Windows"); }
+            try { AppSettings.StartWithWindows = !startup.Checked; startup.Checked = AppSettings.StartWithWindows; settingsWindow?.SyncFromPreferences(startup.Checked); Say(startup.Checked ? "NetOn set to start with Windows" : "NetOn will not start with Windows"); }
             catch (Exception ex) { Report(ex); }
         };
         settingsMenu.DropDownItems.Add(startup);
@@ -188,6 +198,8 @@ internal sealed class MainForm : Form
         mute.Click += (_, _) => { preferences.MuteAllSounds = !preferences.MuteAllSounds; mute.Checked = preferences.MuteAllSounds; if (desktopFeatures) speech.SetMuted(preferences.MuteAllSounds); SavePreferences(); };
         settingsMenu.DropDownItems.Add(mute);
         var voices = new ToolStripMenuItem("Voice");
+        IReadOnlyList<Speech.VoiceChoice> installedVoices = desktopFeatures ? Speech.ListVoices() : [];
+        if (desktopFeatures && preferences.VoiceId is not (null or RecordedVoice.Id) && !installedVoices.Any(v => v.Id == preferences.VoiceId)) preferences.VoiceId = null;
         var defaultVoice = new ToolStripMenuItem("Recorded voice - English") { Tag = "voice:" + RecordedVoice.Id, Checked = preferences.VoiceId is null or RecordedVoice.Id };
         voices.DropDownItems.Add(defaultVoice);
         defaultVoice.Click += (_, _) =>
@@ -198,7 +210,7 @@ internal sealed class MainForm : Form
         };
         if (desktopFeatures)
         {
-            foreach (var choice in Speech.ListVoices())
+            foreach (var choice in installedVoices)
             {
                 var item = new ToolStripMenuItem(choice.Name) { Tag = "voice:" + choice.Id, Checked = preferences.VoiceId == choice.Id };
                 item.Click += (_, _) =>
@@ -238,17 +250,18 @@ internal sealed class MainForm : Form
         stateGlyph.Click += async (_, _) => await ToggleAsync();
         turnOn.Click += async (_, _) => await ChangeAsync(true);
         turnOff.Click += async (_, _) => await ChangeAsync(false);
-        refresh.Click += async (_, _) => { await RefreshAsync(); if (desktopFeatures) await ReadExternalIpAsync(); };
+        refresh.Click += async (_, _) => { await RefreshAsync(clearErrors: true); if (desktopFeatures) await ReadExternalIpAsync(); };
         hide.Click += (_, _) => Hide();
         exit.Click += (_, _) => ExitApp();
         adapters.SelectedIndexChanged += (_, _) =>
         {
             if (rebinding) return;
+            error.Text = "";
             preferences.AdapterId = Selected?.Id;
             SavePreferences();
-            error.Text = "";
             Render();
         };
+        adapters.DropDownClosed += (_, _) => { if (!exiting && !changing) { ApplySnapshot(snapshot); Render(); } };
         timer.Tick += async (_, _) => { if (preferences.Theme == "System" && AppTheme.Dark != AppTheme.ResolveDark("System")) ApplyTheme(); await RunScheduledChangeAsync(); await RefreshAsync(); };
         FormClosing += (_, e) =>
         {
@@ -298,37 +311,51 @@ internal sealed class MainForm : Form
     internal void ShowWindow()
     {
         if (!Visible) SetConnectionDetails(false);
-        showRequested = true; Show(); WindowState = FormWindowState.Normal; Activate();
+        showRequested = true; Show(); RestoreIfMinimized(); Activate();
     }
 
-    internal async Task RefreshAsync()
+    internal void RestoreIfMinimized()
     {
-        if (refreshing || changing || exiting || adapters.DroppedDown) return;
+        if (WindowState == FormWindowState.Minimized) WindowState = restoreState;
+        else restoreState = WindowState;
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        if (WindowState != FormWindowState.Minimized) restoreState = WindowState;
+        base.OnResize(e);
+    }
+
+    internal async Task RefreshAsync(bool clearErrors = false)
+    {
+        if (refreshing || changing || exiting) return;
         refreshing = true;
         int readVersion = operationVersion;
         try
         {
             var found = await service.ReadAsync(lifetime.Token);
             if (exiting || IsDisposed || changing || readVersion != operationVersion) return;
+            if (clearErrors || discoveryError) error.Text = "";
+            discoveryError = false;
             // The user can select an adapter while a background read is in progress.
-            if (!adapters.DroppedDown) ApplySnapshot(found);
-            error.Text = "";
+            ApplySnapshot(found, rebind: !adapterListOpen());
             Render();
             if (desktopFeatures && snapshot.Any(a => a.Enabled) && DateTimeOffset.UtcNow >= nextIpRead) _ = ReadExternalIpAsync();
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
-        catch (Exception ex) { if (!exiting && readVersion == operationVersion) { hasSnapshot = false; Report(ex); Render(); } }
+        catch (Exception ex) { if (!exiting && readVersion == operationVersion) { hasSnapshot = false; Report(ex, fromDiscovery: true); Render(); } }
         finally { refreshing = false; }
     }
 
-    private void ApplySnapshot(List<Adapter> found)
+    private void ApplySnapshot(List<Adapter> found, bool rebind = true)
     {
+        if (!snapshot.Where(a => a.Enabled).Select(a => a.Id).Order().SequenceEqual(found.Where(a => a.Enabled).Select(a => a.Id).Order())) InvalidateExternalIp();
         snapshot = found;
         Guid? desired = Selected?.Id ?? preferences.AdapterId;
-        if (desired is null) desired = found.FirstOrDefault(a => a.Status == "Connected")?.Id ?? found.FirstOrDefault()?.Id;
+        if (desired is null || !found.Any(a => a.Id == desired)) desired = found.FirstOrDefault(a => a.Status == "Connected")?.Id ?? found.FirstOrDefault()?.Id;
         // Don't rebuild the dropdown every timer tick; that steals focus and closes it.
         bool changed = !adapters.Items.Cast<Adapter>().SequenceEqual(found);
-        if (changed)
+        if (changed && rebind)
         {
             rebinding = true;
             adapters.BeginUpdate();
@@ -341,7 +368,7 @@ internal sealed class MainForm : Form
             finally { adapters.EndUpdate(); rebinding = false; }
             adapters.Parent?.PerformLayout();
         }
-        if (preferences.AdapterId is null && Selected is { } selected) { preferences.AdapterId = selected.Id; SavePreferences(); }
+        if (Selected is { } selected && preferences.AdapterId != selected.Id) { preferences.AdapterId = selected.Id; SavePreferences(); }
         hasSnapshot = true;
     }
 
@@ -356,6 +383,8 @@ internal sealed class MainForm : Form
         if (changing || exiting || !hasSnapshot || snapshot.Count == 0) return;
         changing = true;
         operationVersion++;
+        InvalidateExternalIp();
+        discoveryError = false;
         Render();
         status.Text = enable ? "Turning on…" : "Turning off…";
         tray.Icon = Icon = unknownIcon;
@@ -390,24 +419,22 @@ internal sealed class MainForm : Form
         }
     }
 
-    internal void ScheduleChange(bool enable, TimeSpan delay, DateTimeOffset? now = null)
+    internal void ScheduleChange(bool enable, TimeSpan delay)
     {
-        schedule.Set(enable, delay, now ?? DateTimeOffset.UtcNow);
+        schedule.Set(enable, delay);
         Render();
     }
 
-    internal async Task RunScheduledChangeAsync(DateTimeOffset? now = null)
+    internal async Task RunScheduledChangeAsync()
     {
         if (changing || exiting || !hasSnapshot || snapshot.Count == 0) return;
-        if (schedule.TakeDue(now ?? DateTimeOffset.UtcNow) is not bool enable) return;
-        bool alreadySet = enable ? snapshot.Any(a => a.Enabled) && !preferences.OffRequested : snapshot.All(a => !a.Enabled);
-        if (alreadySet) { Render(); return; }
+        if (schedule.TakeDue() is not bool enable) return;
         await ChangeAsync(enable);
     }
 
     private void Render()
     {
-        scheduleSummary.Text = schedule.Describe(DateTimeOffset.UtcNow);
+        scheduleSummary.Text = schedule.Describe();
         cancelSchedule.Enabled = schedule.Due is not null;
         stateGlyph.Enabled = !changing && hasSnapshot && snapshot.Count > 0;
         adapters.Enabled = !changing;
@@ -417,7 +444,7 @@ internal sealed class MainForm : Form
         if (known && !anyEnabled) externalIp = "";
         externalIpLabel.Text = "External IP: " + (!known ? "unavailable" : !anyEnabled ? "unavailable while off" : externalIp.Length > 0 ? externalIp : readingIp ? "checking…" : "unavailable");
         copyIpButton.Enabled = !changing && known && anyEnabled && externalIp.Length > 0;
-        copyIp.Enabled = !changing && known && anyEnabled;
+        copyIp.Enabled = !changing && known && anyEnabled && !readingIp;
         turnOn.Enabled = !changing && known && (!anyEnabled || preferences.OffRequested);
         turnOff.Enabled = !changing && known && anyEnabled;
         trayToggle.Enabled = !changing && known;
@@ -504,26 +531,39 @@ internal sealed class MainForm : Form
         if (tray.ContextMenuStrip is { } menu) ThemeMenu(menu);
         if (IsHandleCreated) { int dark = AppTheme.Dark ? 1 : 0; DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int)); }
         settingsWindow?.ApplyTheme();
+        foreach (var about in OwnedForms.OfType<AboutForm>()) about.ApplyTheme();
         Render();
     }
     protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); UpdateDetailSpacing(); int dark = AppTheme.Dark ? 1 : 0; DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int)); }
     protected override void OnDpiChanged(DpiChangedEventArgs e) { base.OnDpiChanged(e); UpdateDetailSpacing(); }
     private void UpdateDetailSpacing() => detail.Margin = new Padding(0, (int)Math.Ceiling(18 * DeviceDpi / 96f), 0, (int)Math.Ceiling(7 * DeviceDpi / 96f));
-    private void Report(Exception ex) { if (exiting || IsDisposed) return; error.Text = ex.Message; }
-    private void SavePreferences() { if (!desktopFeatures) return; try { preferences.Save(); } catch (Exception ex) { Report(ex); } }
+    private void Report(Exception ex, bool fromDiscovery = false) { if (exiting || IsDisposed) return; discoveryError = fromDiscovery; error.Text = ex.Message; }
+    private void SavePreferences()
+    {
+        try { persistPreferences(); }
+        catch (Exception ex) { Report(ex); settingsWindow?.ReportSaveFailure(); }
+        finally { settingsWindow?.SyncFromPreferences(); }
+    }
 
     private void ShowSettings()
     {
         if (settingsWindow is { IsDisposed: false }) { settingsWindow.Activate(); return; }
-        using var settings = new SettingsForm(preferences, desktopFeatures ? Speech.ListVoices() : [],
+        using var settings = CreateSettingsForm();
+        settingsWindow = settings;
+        try { settings.ShowDialog(this); }
+        finally { settingsWindow = null; }
+        ApplyTheme();
+    }
+
+    internal SettingsForm CreateSettingsForm() => new SettingsForm(preferences, desktopFeatures ? Speech.ListVoices() : [],
             desktopFeatures && AppSettings.StartWithWindows,
             enabled =>
             {
                 if (!desktopFeatures) return;
-                try { AppSettings.StartWithWindows = enabled; Say(enabled ? "NetOn set to start with Windows" : "NetOn will not start with Windows"); }
-                catch (Exception ex) { Report(ex); }
+                AppSettings.StartWithWindows = enabled;
+                Say(enabled ? "NetOn set to start with Windows" : "NetOn will not start with Windows");
             },
-            () => { if (desktopFeatures) speech.SetMuted(preferences.MuteAllSounds); SavePreferences(); RebuildIcons(); ApplyTheme(); },
+            () => { if (desktopFeatures) speech.SetMuted(preferences.MuteAllSounds); RebuildIcons(); ApplyTheme(); persistPreferences(); },
             ChooseColor,
             () =>
             {
@@ -532,11 +572,6 @@ internal sealed class MainForm : Form
                 preferences.OffBackground = defaults.OffBackground; preferences.OffForeground = defaults.OffForeground;
                 SavePreferences(); RebuildIcons(); Say("Colors reset");
             });
-        settingsWindow = settings;
-        try { settings.ShowDialog(this); }
-        finally { settingsWindow = null; }
-        ApplyTheme();
-    }
 
     private void ChooseColor(bool enabled, bool foreground)
     {
@@ -559,17 +594,35 @@ internal sealed class MainForm : Form
 
     internal async Task ReadExternalIpAsync()
     {
-        if (readingIp || exiting || !snapshot.Any(a => a.Enabled)) return;
+        if (readingIp || changing || exiting || !hasSnapshot || !snapshot.Any(a => a.Enabled)) return;
+        int generation = ipGeneration;
         readingIp = true;
+        externalIp = "";
+        hints.SetToolTip(copyIpButton, "Copy external IP address");
         nextIpRead = DateTimeOffset.UtcNow.AddMinutes(1);
         Render();
         try
         {
             string value = (await externalIpLookup(lifetime.Token)).Trim();
-            if (System.Net.IPAddress.TryParse(value, out _) && !exiting && snapshot.Any(a => a.Enabled)) { externalIp = value; Render(); }
+            if (generation == ipGeneration && System.Net.IPAddress.TryParse(value, out _) && !exiting && snapshot.Any(a => a.Enabled)) { externalIp = value; Render(); }
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException) { externalIp = ""; }
-        finally { readingIp = false; if (!exiting && !IsDisposed) Render(); }
+        finally
+        {
+            readingIp = false;
+            if (!exiting && !IsDisposed)
+            {
+                Render();
+                if (generation != ipGeneration && desktopFeatures) _ = ReadExternalIpAsync();
+            }
+        }
+    }
+
+    private void InvalidateExternalIp()
+    {
+        ipGeneration++;
+        externalIp = "";
+        nextIpRead = DateTimeOffset.MinValue;
     }
 
     private static async Task<string> LookupExternalIpAsync(CancellationToken token)
@@ -578,15 +631,15 @@ internal sealed class MainForm : Form
         return await client.GetStringAsync("https://api.ipify.org", token);
     }
 
-    private async Task CopyExternalIpAsync()
+    internal async Task CopyExternalIpAsync()
     {
         copyIp.Enabled = false;
         try
         {
-            await ReadExternalIpAsync();
+            if (externalIp.Length == 0) await ReadExternalIpAsync();
             if (exiting) return;
-            if (externalIp.Length == 0) error.Text = "External IP is unavailable while offline.";
-            else { Clipboard.SetText(externalIp); hints.SetToolTip(copyIpButton, "Copied"); }
+            if (externalIp.Length == 0) error.Text = "External IP is unavailable.";
+            else { copyExternalIp(externalIp); hints.SetToolTip(copyIpButton, "Copied"); }
         }
         catch (Exception ex) { Report(ex); }
         finally { if (!exiting) Render(); }

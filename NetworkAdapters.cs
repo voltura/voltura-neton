@@ -70,6 +70,7 @@ internal sealed class NetworkAdapters : IAdapterService
 
     public async Task SetEnabledAsync(IReadOnlyCollection<Guid> ids, bool enabled, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (ids.Count == 0) return;
         if (!IsAdministrator()) throw new InvalidOperationException("Restart NetOn and accept the administrator prompt before switching internet access.");
         await SetAsAdministratorAsync(ids, enabled, cancellationToken);
@@ -97,7 +98,7 @@ internal sealed class NetworkAdapters : IAdapterService
 
     internal sealed record PowerShellResult(int ExitCode, string Error);
 
-    internal static async Task<PowerShellResult> RunPowerShellAsync(string script, CancellationToken cancellationToken)
+    internal static async Task<PowerShellResult> RunPowerShellAsync(string script, CancellationToken cancellationToken, Func<ProcessStartInfo, Process?>? startProcess = null)
     {
         var start = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"))
         {
@@ -106,7 +107,8 @@ internal sealed class NetworkAdapters : IAdapterService
             StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
         };
         foreach (string arg in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-OutputFormat", "Text", "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(script)) }) start.ArgumentList.Add(arg);
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start Windows PowerShell.");
+        cancellationToken.ThrowIfCancellationRequested();
+        using var process = (startProcess ?? Process.Start)(start) ?? throw new InvalidOperationException("Could not start Windows PowerShell.");
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -114,7 +116,8 @@ internal sealed class NetworkAdapters : IAdapterService
         try { await process.WaitForExitAsync(timeout.Token); }
         catch (OperationCanceledException)
         {
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+            catch (InvalidOperationException) when (process.HasExited) { }
             await process.WaitForExitAsync(CancellationToken.None);
             if (cancellationToken.IsCancellationRequested) throw;
             throw new TimeoutException("Windows took too long to change the adapter. Refresh its status before trying again.");
@@ -129,6 +132,7 @@ internal sealed class NetworkAdapters : IAdapterService
     {
         for (int attempt = 0; attempt < 10; attempt++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var current = read();
             if (ids.All(id => current.FirstOrDefault(a => a.Id == id) is { } actual && actual.Enabled == enabled)) return;
             await Task.Delay(300, cancellationToken);

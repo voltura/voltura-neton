@@ -29,6 +29,11 @@ function Start-Process {
     if ($script:scenario -eq 'canceled') { throw [ComponentModel.Win32Exception]::new(1223) }
     return @{ ExitCode = $(switch ($script:scenario) { 'reboot' { 3010 }; 'install-failed' { 1603 }; default { 0 } }) }
 }
+function Remove-Item {
+    param($LiteralPath, [switch]$Force, $ErrorAction)
+    if ($script:scenario -eq 'cleanup-locked') { throw [IO.IOException]::new('Temporary installer is locked by a scanner') }
+    Microsoft.PowerShell.Management\Remove-Item -LiteralPath $LiteralPath -Force:$Force
+}
 foreach ($case in @(
     @{ Name='success'; Exit=0; Starts=1 },
     @{ Name='reboot'; Exit=3010; Starts=1 },
@@ -37,11 +42,16 @@ foreach ($case in @(
     @{ Name='download-failed'; Exit=1603; Starts=0 },
     @{ Name='bad-hash'; Exit=1603; Starts=0 },
     @{ Name='bad-signature'; Exit=1603; Starts=0 },
-    @{ Name='untrusted-host'; Exit=1603; Starts=0 }
+    @{ Name='untrusted-host'; Exit=1603; Starts=0 },
+    @{ Name='cleanup-locked'; Exit=0; Starts=1 }
 )) {
     $script:scenario = $case.Name; $script:started = 0; $script:downloaded = ''
-    $result = Invoke-NetOnRuntimeSetup
-    if ($result -ne $case.Exit -or $script:started -ne $case.Starts) { throw "Runtime bootstrap case failed: $($case.Name), exit=$result, starts=$script:started" }
-    if ($script:downloaded -and (Test-Path -LiteralPath $script:downloaded)) { throw 'Temporary runtime download was not removed' }
-    Write-Output "PASS: runtime bootstrap $($case.Name)"
+    try {
+        $result = Invoke-NetOnRuntimeSetup
+        if ($result -ne $case.Exit -or $script:started -ne $case.Starts) { throw "Runtime bootstrap case failed: $($case.Name), exit=$result, starts=$script:started" }
+        if ($case.Name -ne 'cleanup-locked' -and $script:downloaded -and (Test-Path -LiteralPath $script:downloaded)) { throw 'Temporary runtime download was not removed' }
+        Write-Output "PASS: runtime bootstrap $($case.Name)"
+    } finally {
+        if ($script:downloaded -and (Test-Path -LiteralPath $script:downloaded)) { [IO.File]::Delete($script:downloaded) }
+    }
 }

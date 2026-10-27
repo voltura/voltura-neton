@@ -30,7 +30,7 @@ internal static class Program
         start.Tick += async (_, _) =>
         {
             start.Stop();
-            try { if (renderUi) await RenderUiAsync(args[1]); else { await CheckPowerShellAsync(); CheckSchedules(); await CheckFormAsync(); } }
+            try { if (renderUi) await RenderUiAsync(args[1]); else { await CheckPowerShellAsync(); CheckSchedules(); await CheckFormAsync(); await ReviewChecks.RunAsync(); await AdditionalChecks.RunAsync(); } }
             catch (Exception ex) { failures++; Console.WriteLine("FAIL: " + ex); }
             finally { context.ExitThread(); }
         };
@@ -221,7 +221,8 @@ internal static class Program
         var spare = new Adapter("Spare", Guid.NewGuid(), "Previously disabled", "Disabled", 2);
         var service = new FakeService { Snapshot = [ethernet, wifi, spare] };
         var settings = System.Text.Json.JsonSerializer.Deserialize<AppSettings>("{\"MuteAllSounds\":true,\"ShowConnectionDetails\":true}")!;
-        using var form = new MainForm(service, settings, desktopFeatures: false, externalIpLookup: _ => Task.FromResult("203.0.113.5"));
+        var clock = new ManualClock();
+        using var form = new MainForm(service, settings, desktopFeatures: false, externalIpLookup: _ => Task.FromResult("203.0.113.5"), timeProvider: clock);
         _ = form.Handle;
         await form.RefreshAsync();
         var selector = Control<ComboBox>(form, "AdapterSelector");
@@ -252,6 +253,7 @@ internal static class Program
         adapterSelector.Items.Add(longAdapter);
         adapterSelector.Parent.PerformLayout();
         int nameWidth = TextRenderer.MeasureText(longAdapter.Name, adapterSelector.Font).Width;
+        Console.WriteLine($"Long adapter layout: selector={adapterSelector.Bounds}, parent={adapterSelector.Parent.Bounds}, nameWidth={nameWidth}, dpi={adapterSelector.DeviceDpi}");
         Require(adapterSelector.Width >= nameWidth + 24 * adapterSelector.DeviceDpi / 96 && adapterSelector.Width < adapterSelector.Parent.Width, "long connection name fits without making the selector fill the window");
         adapterSelector.Items.Remove(longAdapter);
         adapterSelector.Parent.PerformLayout();
@@ -306,24 +308,28 @@ internal static class Program
         Require(Control<Button>(form, "TurnOff").Enabled && !Control<Button>(form, "TurnOn").Enabled, "successful ON switches the controls to allow OFF");
         using (var green = form.Icon!.ToBitmap()) Require(IsStateColor(green, true), "successful ON switches the displayed icon to green");
 
-        var scheduledAt = DateTimeOffset.UtcNow;
-        form.ScheduleChange(false, TimeSpan.FromMinutes(10), scheduledAt);
-        await form.RunScheduledChangeAsync(scheduledAt.AddMinutes(9));
+        form.ScheduleChange(false, TimeSpan.FromMinutes(10));
+        clock.Advance(TimeSpan.FromMinutes(9));
+        await form.RunScheduledChangeAsync();
         Require(service.Snapshot.Any(a => a.Enabled), "scheduled OFF does not run early");
-        await form.RunScheduledChangeAsync(scheduledAt.AddMinutes(10));
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await form.RunScheduledChangeAsync();
         Require(service.Snapshot.All(a => !a.Enabled), "scheduled OFF uses the same global adapter switch");
-        form.ScheduleChange(true, TimeSpan.FromMinutes(30), scheduledAt);
-        await form.RunScheduledChangeAsync(scheduledAt.AddHours(1));
+        form.ScheduleChange(true, TimeSpan.FromMinutes(30));
+        clock.Advance(TimeSpan.FromHours(1));
+        await form.RunScheduledChangeAsync();
         Require(service.Snapshot.Where(a => a.Enabled).Select(a => a.Id).ToHashSet().SetEquals([ethernet.Id, wifi.Id]), "overdue ON restores only the connections saved before OFF");
         service.LastIds = [];
-        await form.RunScheduledChangeAsync(scheduledAt.AddDays(1));
+        clock.Advance(TimeSpan.FromDays(1));
+        await form.RunScheduledChangeAsync();
         Require(service.LastIds.Count == 0, "scheduled change executes only once");
         var scheduleTray = (NotifyIcon)typeof(MainForm).GetField("tray", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
         var scheduleMenu = (ToolStripMenuItem)scheduleTray.ContextMenuStrip!.Items.Cast<ToolStripItem>().Single(i => i.Text == "Schedule");
         Require(((ToolStripMenuItem)scheduleMenu.DropDownItems[2]).DropDownItems.Count == 7 && ((ToolStripMenuItem)scheduleMenu.DropDownItems[3]).DropDownItems.Count == 7, "tray menu offers all seven delays for both ON and OFF");
-        form.ScheduleChange(false, TimeSpan.FromHours(1), scheduledAt);
+        form.ScheduleChange(false, TimeSpan.FromHours(1));
         scheduleMenu.DropDownItems.Cast<ToolStripItem>().Single(i => i.Text == "Cancel scheduled change").PerformClick();
-        await form.RunScheduledChangeAsync(scheduledAt.AddHours(2));
+        clock.Advance(TimeSpan.FromHours(2));
+        await form.RunScheduledChangeAsync();
         Require(service.LastIds.Count == 0, "canceling a scheduled change prevents execution");
         service.IgnoreId = wifi.Id;
         await form.ChangeAsync(false);
@@ -473,20 +479,25 @@ internal static class Program
 
     private static void CheckSchedules()
     {
-        var now = DateTimeOffset.UtcNow;
-        var schedule = new NetworkSchedule();
+        var clock = new ManualClock();
+        var schedule = new NetworkSchedule(clock);
         Require(NetworkSchedule.Options.Select(o => o.Delay.TotalMinutes).SequenceEqual(new double[] { 10, 30, 60, 120, 240, 480, 1440 }), "schedule intervals match the requested list");
         foreach (var option in NetworkSchedule.Options)
         foreach (bool enable in new[] { true, false })
         {
-            schedule.Set(enable, option.Delay, now);
-            Require(schedule.TakeDue(now + option.Delay - TimeSpan.FromSeconds(1)) is null && schedule.TakeDue(now + option.Delay) == enable && schedule.TakeDue(now.AddDays(2)) is null, $"{option.Label} {(enable ? "ON" : "OFF")} fires at its deadline only once");
+            schedule.Set(enable, option.Delay);
+            clock.Advance(option.Delay - TimeSpan.FromSeconds(1));
+            Require(schedule.TakeDue() is null, $"{option.Label} {(enable ? "ON" : "OFF")} does not run early");
+            clock.Advance(TimeSpan.FromSeconds(1));
+            Require(schedule.TakeDue() == enable && schedule.TakeDue() is null, $"{option.Label} {(enable ? "ON" : "OFF")} fires at its deadline only once");
         }
-        schedule.Set(false, TimeSpan.FromHours(1), now);
-        schedule.Set(true, TimeSpan.FromMinutes(10), now);
-        Require(schedule.TakeDue(now.AddMinutes(10)) == true, "new schedule replaces the previous schedule");
-        schedule.Set(false, TimeSpan.FromHours(24), now);
-        Require(schedule.TakeDue(now.AddHours(26)) == false, "schedule uses elapsed time and handles sleep past the deadline");
+        schedule.Set(false, TimeSpan.FromHours(1));
+        schedule.Set(true, TimeSpan.FromMinutes(10));
+        clock.Advance(TimeSpan.FromMinutes(10));
+        Require(schedule.TakeDue() == true, "new schedule replaces the previous schedule");
+        schedule.Set(false, TimeSpan.FromHours(24));
+        clock.Advance(TimeSpan.FromHours(26));
+        Require(schedule.TakeDue() == false, "schedule handles sleep past the deadline");
     }
 
     private static async Task CheckPowerShellAsync()

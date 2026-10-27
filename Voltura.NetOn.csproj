@@ -9,7 +9,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>Voltura.NetOn</AssemblyName>
     <Product>Voltura NetOn</Product>
-    <Version>1.0.8</Version>
+    <Version>1.0.9</Version>
     <Company>Voltura</Company>
     <ApplicationIcon>appicon.ico</ApplicationIcon>
     <SelfContained>false</SelfContained>
@@ -17,6 +17,7 @@
   <ItemGroup>
     <Compile Remove="verification/**/*.cs" />
     <Compile Remove="publish/**/*.cs" />
+    <Compile Remove="artifacts/**/*.cs" />
     <None Update="THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" />
     <InternalsVisibleTo Include="NetOn.Verification" />
     <EmbeddedResource Include="assets/neton-illustration.png" LogicalName="Voltura.NetOn.Artwork" />

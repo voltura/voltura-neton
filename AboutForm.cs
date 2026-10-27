@@ -36,21 +36,45 @@ internal sealed class AboutForm : Form
         string version = typeof(MainForm).Assembly.GetName().Version?.ToString(3) ?? "";
         layout.Controls.Add(new Label { Text = $"By Voltura AB · Version {version}", AutoSize = true, ForeColor = AppTheme.Muted, Margin = new Padding(0, 10, 0, 10) });
         var website = new LinkLabel { Text = "Visit the NetOn website", AutoSize = true, LinkColor = AppTheme.Positive, ActiveLinkColor = AppTheme.Positive, VisitedLinkColor = AppTheme.Positive, Margin = new Padding(0, 0, 0, 8) };
-        website.LinkClicked += (_, _) => Process.Start(new ProcessStartInfo("https://voltura.github.io/voltura-neton/") { UseShellExecute = true });
+        website.LinkClicked += (_, _) => OpenWebsite(website, () => Process.Start(new ProcessStartInfo("https://neton.voltura.se/") { UseShellExecute = true }));
         layout.Controls.Add(website);
         layout.Controls.Add(new Label { Text = "Free for all.", AutoSize = true, ForeColor = AppTheme.Muted });
         var close = new ModernButton { Name = "AboutClose", Text = "OK", DialogResult = DialogResult.OK, Anchor = AnchorStyles.Right, Margin = Padding.Empty };
         layout.Controls.Add(close);
         AcceptButton = CancelButton = close;
         Controls.Add(layout);
+        ApplyTheme();
         ResumeLayout(true);
+    }
+
+    internal static void OpenWebsite(LinkLabel website, Action open)
+    {
+        try { open(); }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            website.Text = "Website: neton.voltura.se";
+            website.LinkVisited = false;
+        }
     }
 
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        int dark = AppTheme.Dark ? 1 : 0;
-        DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int));
+        ApplyTheme();
+    }
+
+    internal void ApplyTheme()
+    {
+        void Paint(Control control)
+        {
+            control.BackColor = AppTheme.Paper;
+            control.ForeColor = control is Label && control.Font.Size <= 10 ? AppTheme.Muted : AppTheme.Ink;
+            if (control is LinkLabel link) link.LinkColor = link.ActiveLinkColor = link.VisitedLinkColor = AppTheme.Positive;
+            foreach (Control child in control.Controls) Paint(child);
+            control.Invalidate();
+        }
+        Paint(this);
+        if (IsHandleCreated) { int dark = AppTheme.Dark ? 1 : 0; DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int)); }
     }
 
     protected override void Dispose(bool disposing)

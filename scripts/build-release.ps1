@@ -1,5 +1,5 @@
 param(
-    [string]$Version = '1.0.8',
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.0.9',
     [string]$MakeNsis = 'C:\Program Files (x86)\NSIS\makensis.exe'
 )
 $ErrorActionPreference = 'Stop'
@@ -7,7 +7,7 @@ $netonRoot = Split-Path -Parent $PSScriptRoot
 $releaseRoot = Join-Path $netonRoot "artifacts\release-$Version-framework"
 $payload = Join-Path $releaseRoot ('app-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $payload -Force | Out-Null
-dotnet publish (Join-Path $netonRoot 'Voltura.NetOn.csproj') -c Release -r win-x64 --self-contained false -p:DebugType=None -p:DebugSymbols=false -o $payload
+dotnet publish (Join-Path $netonRoot 'Voltura.NetOn.csproj') -c Release -r win-x64 --self-contained false -p:DebugType=None -p:DebugSymbols=false "-p:Version=$Version" -o $payload
 if ($LASTEXITCODE -ne 0) { throw 'Publish failed' }
 $forbidden = @('createdump.exe', 'coreclr.dll', 'hostfxr.dll', 'hostpolicy.dll', 'System.Windows.Forms.dll')
 foreach ($name in $forbidden) { if (Test-Path -LiteralPath (Join-Path $payload $name)) { throw "Runtime file must not be packaged: $name" } }

@@ -16,35 +16,83 @@ internal sealed class AppSettings
     public int OffBackground { get; set; } = AppTheme.Red.ToArgb();
     public int OffForeground { get; set; } = Color.White.ToArgb();
     public static string DirectoryPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Voltura", "NetOn");
-    private static string FilePath => Path.Combine(DirectoryPath, "preferences.json");
 
-    public static AppSettings Load()
+    internal void Normalize()
     {
+        RestoreAdapterIds = (RestoreAdapterIds ?? []).Where(id => id != Guid.Empty).Distinct().ToList();
+        if (RestoreAdapterIds.Count > 0) OffRequested = true;
+        if (AdapterId == Guid.Empty) AdapterId = null;
+        if (Theme is not ("System" or "Light" or "Dark")) Theme = "System";
+        if (string.IsNullOrWhiteSpace(VoiceId)) VoiceId = null;
+    }
+
+    internal static AppSettings Parse(string json)
+    {
+        var settings = JsonSerializer.Deserialize<AppSettings>(json) ?? throw new JsonException("Settings are empty.");
+        settings.Normalize();
+        return settings;
+    }
+
+    public static AppSettings Load() => LoadFromDirectory(DirectoryPath);
+
+    internal static AppSettings LoadFromDirectory(string directory)
+    {
+        foreach (string name in new[] { "preferences.json", "preferences.json.bak" })
+        {
+            try
+            {
+                string path = Path.Combine(directory, name);
+                if (File.Exists(path)) return Parse(File.ReadAllText(path));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { }
+        }
         try
         {
-            if (File.Exists(FilePath)) return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath)) ?? new();
-            string old = Path.Combine(DirectoryPath, "settings.json");
+            string old = Path.Combine(directory, "settings.json");
             return new AppSettings { AdapterId = File.Exists(old) ? JsonSerializer.Deserialize<Guid?>(File.ReadAllText(old)) : null };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { return new(); }
     }
 
-    public void Save()
+    public void Save() => SaveToDirectory(DirectoryPath);
+
+    internal void SaveToDirectory(string directory)
     {
-        Directory.CreateDirectory(DirectoryPath);
-        string temporary = FilePath + ".tmp";
-        File.WriteAllText(temporary, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
-        File.Move(temporary, FilePath, true);
+        Normalize();
+        Directory.CreateDirectory(directory);
+        string path = Path.Combine(directory, "preferences.json");
+        string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                byte[] data = System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+                file.Write(data);
+                file.Flush(flushToDisk: true);
+            }
+            if (File.Exists(path)) File.Replace(temporary, path, path + ".bak", ignoreMetadataErrors: true);
+            else File.Move(temporary, path);
+        }
+        finally
+        {
+            try { if (File.Exists(temporary)) File.Delete(temporary); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
     }
 
     public static bool StartWithWindows
     {
-        get { using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"); return key?.GetValue("Voltura NetOn") is string; }
+        get => ReadStartWithWindows(() => { using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"); return key?.GetValue("Voltura NetOn"); });
         set
         {
             using var key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run");
-            if (value) key.SetValue("Voltura NetOn", $"\"{Environment.ProcessPath}\"");
+            if (value) key.SetValue("Voltura NetOn", AppLaunch.StartupCommand(Environment.ProcessPath!, typeof(AppSettings).Assembly.Location));
             else key.DeleteValue("Voltura NetOn", false);
         }
+    }
+    internal static bool ReadStartWithWindows(Func<object?> read)
+    {
+        try { return read() is string; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException) { return false; }
     }
 }

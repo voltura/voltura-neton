@@ -1,4 +1,4 @@
-param([string]$Version = '1.0.8')
+param([string]$Version = '1.0.9')
 $ErrorActionPreference = 'Stop'
 $netonRoot = Split-Path -Parent $PSScriptRoot
 $releaseRoot = Join-Path $netonRoot "artifacts\release-$Version-framework"
@@ -54,6 +54,22 @@ $failedInstallRoot = Join-Path $testRoot 'must-not-install'
 $missing = Start-Process -FilePath $probe -ArgumentList @('/S', "/D=$failedInstallRoot") -WindowStyle Hidden -PassThru -Wait
 if ($missing.ExitCode -ne 1603 -or (Test-Path -LiteralPath $failedInstallRoot) -or (Test-Path -LiteralPath $uninstallKey)) { throw 'Missing-runtime prerequisite check failed' }
 Write-Output 'PASS: component setup failure prevents installation (exit 1603)'
+$invalidDesktop = Join-Path $missingRoot 'shared\Microsoft.WindowsDesktop.App\10.0.99.backup'
+New-Item -ItemType Directory -Path $invalidDesktop -Force | Out-Null
+'Not an installed runtime version.' | Set-Content -LiteralPath (Join-Path $invalidDesktop 'System.Windows.Forms.dll')
+$invalidInstallRoot = Join-Path $testRoot 'invalid-version-must-not-install'
+try {
+    $invalid = Start-Process -FilePath $probe -ArgumentList @('/S', "/D=$invalidInstallRoot") -WindowStyle Hidden -PassThru -Wait
+    if ($invalid.ExitCode -ne 1603 -or (Test-Path -LiteralPath (Join-Path $invalidInstallRoot 'Voltura.NetOn.exe'))) { throw 'A backup folder was incorrectly accepted as an installed .NET runtime' }
+    Write-Output 'PASS NEW: non-version runtime folders cannot bypass prerequisite installation'
+} finally {
+    $invalidUninstaller = Join-Path $invalidInstallRoot 'Uninstall.exe'
+    if (Test-Path -LiteralPath $invalidUninstaller) {
+        Start-Process -FilePath $invalidUninstaller -ArgumentList '/S' -WindowStyle Hidden -Wait
+        $deadline = [DateTime]::UtcNow.AddSeconds(15)
+        while ((Test-Path -LiteralPath $uninstallKey) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
+    }
+}
 $fakeDesktop = Join-Path $missingRoot 'shared\Microsoft.WindowsDesktop.App\10.0.99'
 @"
 New-Item -ItemType Directory -Path '$fakeDesktop' -Force | Out-Null

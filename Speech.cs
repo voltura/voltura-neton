@@ -11,7 +11,12 @@ internal sealed class Speech : IDisposable
 {
     internal sealed record VoiceChoice(string Id, string Name);
     private readonly Func<string?> preferredVoice;
-    public Speech(Func<string?>? preferredVoice = null) => this.preferredVoice = preferredVoice ?? (() => null);
+    private readonly Func<IWavePlayer> createOutput;
+    public Speech(Func<string?>? preferredVoice = null, Func<IWavePlayer>? createOutput = null)
+    {
+        this.preferredVoice = preferredVoice ?? (() => null);
+        this.createOutput = createOutput ?? (() => new WaveOutEvent { DesiredLatency = 150, NumberOfBuffers = 3 });
+    }
     internal const int SampleRate = 22050;
     private readonly BlockingCollection<string> pending = new(1);
     private readonly ManualResetEventSlim shutdown = new();
@@ -19,6 +24,7 @@ internal sealed class Speech : IDisposable
     private bool disposed;
     private volatile bool muted;
     private int playbackGeneration;
+    private int requestGeneration;
     private Thread? worker;
 
     public void SetMuted(bool value)
@@ -28,7 +34,7 @@ internal sealed class Speech : IDisposable
             if (disposed) return;
             muted = value;
             if (value) { Interlocked.Increment(ref playbackGeneration); pending.TryTake(out _); }
-            else EnsureWorker();
+            else { Interlocked.Increment(ref requestGeneration); EnsureWorker(); }
         }
     }
 
@@ -49,33 +55,39 @@ internal sealed class Speech : IDisposable
             // Finish the current recording; retain only the newest waiting announcement.
             pending.TryTake(out _);
             pending.TryAdd(text);
+            Interlocked.Increment(ref requestGeneration);
         }
     }
 
     private void PlayAnnouncements()
     {
-        WaveOutEvent? output = null;
+        IWavePlayer? output = null;
         var source = new AnnouncementAudio();
+        bool failed = false;
+        int failedGeneration = 0;
         try
         {
             while (!shutdown.IsSet)
             {
                 if (muted)
                 {
-                    output?.Dispose(); output = null;
+                    CloseOutput(ref output);
                     source.Clear();
                     shutdown.Wait(50);
                     continue;
                 }
+                int request = Volatile.Read(ref requestGeneration);
+                if (output is null && failed && request == failedGeneration) { shutdown.Wait(50); continue; }
                 try
                 {
                     if (output is null || output.PlaybackState == PlaybackState.Stopped)
                     {
-                        output?.Dispose();
+                        CloseOutput(ref output);
                         source = new AnnouncementAudio();
-                        output = new WaveOutEvent { DesiredLatency = 150, NumberOfBuffers = 3 };
+                        output = createOutput();
                         output.Init(source);
                         output.Play();
+                        failed = false;
                         // Warm the endpoint once, without a beep, before sending any speech.
                         for (int i = 0; i < 24 && !muted && !shutdown.IsSet; i++) shutdown.Wait(50);
                     }
@@ -89,21 +101,36 @@ internal sealed class Speech : IDisposable
                     while (!shutdown.IsSet && !muted && generation == Volatile.Read(ref playbackGeneration))
                     {
                         if (output.PlaybackState != PlaybackState.Playing) break;
-                        if (source.EndPosition is long end && unchecked((int)((uint)output.GetPosition() - (uint)end)) >= 0) break;
+                        if (source.EndPosition is long end && unchecked((int)((uint)((IWavePosition)output).GetPosition() - (uint)end)) >= 0) break;
                         shutdown.Wait(25);
                     }
                     source.Clear();
                 }
-                catch (Exception ex) when (ex is COMException or NAudio.MmException or InvalidOperationException or ArgumentException or IOException or TimeoutException or Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
+                catch (Exception ex) when (ex is COMException or NAudio.MmException or InvalidOperationException or ArgumentException or IOException or InvalidDataException or TimeoutException or Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
                 {
                     // Audio failure must never block network controls or Exit. Retry on the next request.
-                    output?.Dispose(); output = null;
-                    pending.TryTake(out _);
+                    CloseOutput(ref output);
+                    failed = true;
+                    failedGeneration = request;
                     shutdown.Wait(250);
                 }
             }
         }
-        finally { output?.Dispose(); }
+        finally
+        {
+            CloseOutput(ref output);
+            // Dispose signals the worker while holding this same gate. Wait until it
+            // has completed CompleteAdding before releasing the collection/event.
+            lock (gate) { pending.Dispose(); shutdown.Dispose(); }
+        }
+    }
+
+    private static void CloseOutput(ref IWavePlayer? output)
+    {
+        var previous = output;
+        output = null;
+        try { previous?.Dispose(); }
+        catch (Exception ex) when (ex is NAudio.MmException or COMException or InvalidOperationException) { }
     }
 
     internal static IReadOnlyList<VoiceChoice> ListVoices()
@@ -143,6 +170,7 @@ internal sealed class Speech : IDisposable
         {
             voice = Activator.CreateInstance(Type.GetTypeFromProgID("SAPI.SpVoice")!);
             object tokens = ((dynamic)voice!).GetVoices();
+            bool matchedVoice = false;
             try
             {
                 for (int i = 0; i < ((dynamic)tokens).Count; i++)
@@ -152,12 +180,13 @@ internal sealed class Speech : IDisposable
                     {
                         bool matches = voiceId is not null ? ((string)((dynamic)token).Id).Equals(voiceId, StringComparison.OrdinalIgnoreCase)
                             : ((string)((dynamic)token).GetDescription()).Contains("Zira", StringComparison.OrdinalIgnoreCase);
-                        if (matches) { ((dynamic)voice).Voice = token; break; }
+                        if (matches) { ((dynamic)voice).Voice = token; matchedVoice = true; break; }
                     }
                     finally { Marshal.FinalReleaseComObject(token); }
                 }
             }
             finally { Marshal.FinalReleaseComObject(tokens); }
+            if (voiceId is not null && !matchedVoice && RecordedVoice.ReadPcm(text) is { } fallback) return WrapPcm(fallback);
             ((dynamic)voice).Rate = -1;
             memory = Activator.CreateInstance(Type.GetTypeFromProgID("SAPI.SpMemoryStream")!);
             dynamic output = memory!;
@@ -200,6 +229,7 @@ internal sealed class Speech : IDisposable
             disposed = true;
             shutdown.Set();
             pending.CompleteAdding();
+            if (worker is null) { pending.Dispose(); shutdown.Dispose(); }
         }
     }
 }

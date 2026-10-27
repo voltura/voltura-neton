@@ -47,7 +47,9 @@ function Invoke-NetOnRuntimeSetup {
         [Console]::WriteLine($_.Exception.Message)
         return 1603
     } finally {
-        if (Test-Path -LiteralPath $runtimeFile) { Remove-Item -LiteralPath $runtimeFile -Force }
+        # A scanner may still hold the downloaded file after Setup exits. Cleanup
+        # must not change the actual component-installation result.
+        try { if (Test-Path -LiteralPath $runtimeFile) { Remove-Item -LiteralPath $runtimeFile -Force -ErrorAction SilentlyContinue } } catch { }
     }
 }
 

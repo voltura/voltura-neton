@@ -17,7 +17,13 @@ internal static class AppTheme
     public static Color Negative => Dark ? Color.FromArgb(243, 143, 132) : Red;
     public static readonly Color Green = Color.FromArgb(29, 101, 68);
     public static readonly Color Red = Color.FromArgb(166, 61, 55);
-    public static bool ResolveDark(string choice) => choice == "Dark" || (choice != "Light" && Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1) is int value && value == 0);
+    public static bool ResolveDark(string choice, Func<object?>? readPreference = null)
+    {
+        if (choice == "Dark") return true;
+        if (choice == "Light") return false;
+        try { return (readPreference ?? (() => Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1)))() is int value && value == 0; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException) { return false; }
+    }
     public static void Set(string choice) => Dark = ResolveDark(choice);
     public static GraphicsPath Rounded(RectangleF rect, float radius)
     {

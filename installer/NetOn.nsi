@@ -18,6 +18,15 @@ ${StrStr}
 !ifndef MENU_NAME
   !define MENU_NAME "Voltura NetOn"
 !endif
+!ifndef RUN_KEY
+  !define RUN_KEY "Software\Microsoft\Windows\CurrentVersion\Run"
+!endif
+!ifndef STARTUP_VALUE
+  !define STARTUP_VALUE "Voltura NetOn"
+!endif
+!ifndef DESKTOP_LINK
+  !define DESKTOP_LINK "$DESKTOP\Voltura NetOn.lnk"
+!endif
 Name "Voltura NetOn"
 OutFile "${OUTPUT_FILE}"
 InstallDir "$LOCALAPPDATA\Programs\Voltura NetOn"
@@ -66,6 +75,29 @@ Var RuntimeRoot
 Var RuntimeFound
 Var RuntimeExitCode
 Var HadRunningNetOn
+Var PreviousInstallDir
+Var SetupMutex
+
+!macro AcquireSetupMutex PREFIX
+Function ${PREFIX}AcquireSetupMutex
+  System::Call 'kernel32::CreateMutexW(p 0, i 0, w "Global\Voltura.NetOn.Setup.${MENU_NAME}") p .r0 ?e'
+  Pop $1
+  ${If} $0 == 0
+  ${OrIf} $1 == 183
+    ${If} $0 != 0
+      System::Call 'kernel32::CloseHandle(p r0)'
+    ${EndIf}
+    IfSilent mutex_busy
+    MessageBox MB_OK|MB_ICONINFORMATION "Another NetOn setup is already open. Close it and try again."
+mutex_busy:
+    SetErrorLevel 1618
+    Quit
+  ${EndIf}
+  StrCpy $SetupMutex $0
+FunctionEnd
+!macroend
+!insertmacro AcquireSetupMutex ""
+!insertmacro AcquireSetupMutex "un."
 
 Function ClosePreviousVersion
   InitPluginsDir
@@ -102,6 +134,20 @@ runtime_loop:
   StrCmp $1 "" runtime_done
   ${StrStr} $2 $1 "-"
   StrCmp $2 "" 0 runtime_next
+  ; The host accepts release-version directories, not backup/partial folders
+  ; that merely happen to contain a Windows Forms assembly.
+  StrLen $2 $1
+  IntCmp $2 5 runtime_next runtime_next runtime_version
+runtime_version:
+  StrCpy $2 5
+runtime_digit:
+  StrCpy $3 $1 1 $2
+  StrCmp $3 "" runtime_valid
+  ${StrStr} $4 "0123456789" $3
+  StrCmp $4 "" runtime_next
+  IntOp $2 $2 + 1
+  Goto runtime_digit
+runtime_valid:
   IfFileExists "$RuntimeRoot\shared\Microsoft.WindowsDesktop.App\$1\System.Windows.Forms.dll" 0 runtime_next
   StrCpy $RuntimeFound 1
   Goto runtime_done
@@ -112,6 +158,7 @@ runtime_done:
   FindClose $0
 FunctionEnd
 Function .onInit
+  Call AcquireSetupMutex
   ${IfNot} ${RunningX64}
     MessageBox MB_OK|MB_ICONSTOP "Voltura NetOn requires 64-bit Windows."
     SetErrorLevel 1633
@@ -124,6 +171,7 @@ Function .onInit
   ${EndIf}
   SetRegView 64
   SetShellVarContext current
+  ReadRegStr $PreviousInstallDir HKCU "${INSTALLER_KEY}" "InstallDir"
   !ifdef TEST_RUNTIME_ROOT
     StrCpy $RuntimeRoot "${TEST_RUNTIME_ROOT}"
   !else
@@ -197,6 +245,22 @@ Section "Voltura NetOn (required)" MainSection
   !insertmacro CheckClosed "install_"
   !include "${INSTALL_FILES}"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
+  ${If} $PreviousInstallDir != ""
+    ReadRegStr $0 HKCU "${RUN_KEY}" "${STARTUP_VALUE}"
+    ${If} $0 == '$\"$PreviousInstallDir\Voltura.NetOn.exe$\"'
+      WriteRegStr HKCU "${RUN_KEY}" "${STARTUP_VALUE}" '$\"$INSTDIR\Voltura.NetOn.exe$\"'
+    ${EndIf}
+    ReadRegStr $0 HKCU "${UNINSTALL_KEY}" "DesktopShortcut"
+    ${If} $0 == $PreviousInstallDir
+      IfFileExists "${DESKTOP_LINK}" 0 desktop_removed
+      CreateShortcut "${DESKTOP_LINK}" "$INSTDIR\Voltura.NetOn.exe"
+      WriteRegStr HKCU "${UNINSTALL_KEY}" "DesktopShortcut" "$INSTDIR"
+      Goto desktop_updated
+desktop_removed:
+      DeleteRegValue HKCU "${UNINSTALL_KEY}" "DesktopShortcut"
+desktop_updated:
+    ${EndIf}
+  ${EndIf}
   WriteRegStr HKCU "${INSTALLER_KEY}" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "Voltura NetOn"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${APP_VERSION}"
@@ -215,10 +279,11 @@ Section "Voltura NetOn (required)" MainSection
   CreateShortcut "$SMPROGRAMS\${MENU_NAME}\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
 SectionEnd
 Section /o "Desktop shortcut" DesktopSection
-  CreateShortcut "$DESKTOP\Voltura NetOn.lnk" "$INSTDIR\Voltura.NetOn.exe"
+  CreateShortcut "${DESKTOP_LINK}" "$INSTDIR\Voltura.NetOn.exe"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DesktopShortcut" "$INSTDIR"
 SectionEnd
 Function un.onInit
+  Call un.AcquireSetupMutex
   SetRegView 64
   SetShellVarContext current
 FunctionEnd
@@ -227,17 +292,23 @@ Section "Uninstall"
   !include "${UNINSTALL_FILES}"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir "$INSTDIR"
-  Delete "$SMPROGRAMS\${MENU_NAME}\Voltura NetOn.lnk"
-  Delete "$SMPROGRAMS\${MENU_NAME}\Uninstall.lnk"
-  RMDir "$SMPROGRAMS\${MENU_NAME}"
+  ReadRegStr $0 HKCU "${INSTALLER_KEY}" "InstallDir"
+  ${If} $0 == "$INSTDIR"
+    Delete "$SMPROGRAMS\${MENU_NAME}\Voltura NetOn.lnk"
+    Delete "$SMPROGRAMS\${MENU_NAME}\Uninstall.lnk"
+    RMDir "$SMPROGRAMS\${MENU_NAME}"
+    DeleteRegKey HKCU "${INSTALLER_KEY}"
+  ${EndIf}
   ReadRegStr $0 HKCU "${UNINSTALL_KEY}" "DesktopShortcut"
   ${If} $0 == "$INSTDIR"
-    Delete "$DESKTOP\Voltura NetOn.lnk"
+    Delete "${DESKTOP_LINK}"
   ${EndIf}
-  ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Voltura NetOn"
+  ReadRegStr $0 HKCU "${RUN_KEY}" "${STARTUP_VALUE}"
   ${If} $0 == '$\"$INSTDIR\Voltura.NetOn.exe$\"'
-    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Voltura NetOn"
+    DeleteRegValue HKCU "${RUN_KEY}" "${STARTUP_VALUE}"
   ${EndIf}
-  DeleteRegKey HKCU "${UNINSTALL_KEY}"
-  DeleteRegKey HKCU "${INSTALLER_KEY}"
+  ReadRegStr $0 HKCU "${UNINSTALL_KEY}" "InstallLocation"
+  ${If} $0 == "$INSTDIR"
+    DeleteRegKey HKCU "${UNINSTALL_KEY}"
+  ${EndIf}
 SectionEnd
