@@ -4,15 +4,27 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#123d2a">
-  <title>NetOn — Internet on. Internet off. Your call.</title>
+  <title>NetOn — Internet on or off for Windows</title>
   <meta name="description" content="Turn your PC's internet access on or off with one click. Download NetOn, a free, simple Windows app from Voltura.">
   <link rel="canonical" href="https://neton.voltura.se/">
-  <meta property="og:title" content="NetOn — Your connection. Your choice.">
+  <meta property="og:title" content="NetOn — Internet on or off for Windows">
   <meta property="og:description" content="Internet on or off, with one click. A free Windows app from Voltura.">
   <meta property="og:type" content="website">
+  <meta property="og:site_name" content="NetOn by Voltura">
+  <meta property="og:locale" content="en_US">
   <meta property="og:url" content="https://neton.voltura.se/">
-  <meta property="og:image" content="https://neton.voltura.se/assets/neton-illustration.webp">
-  <link rel="icon" href="assets/favicon.ico">
+  <meta property="og:image" content="https://neton.voltura.se/assets/social-preview.png">
+  <meta property="og:image:secure_url" content="https://neton.voltura.se/assets/social-preview.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1730">
+  <meta property="og:image:height" content="909">
+  <meta property="og:image:alt" content="NetOn — Internet on or off for Windows, by Voltura AB, with a green switch">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="NetOn — Internet on or off for Windows">
+  <meta name="twitter:description" content="Turn your PC's internet on or off with one click, or schedule a change for later. Free for Windows 10 and 11.">
+  <meta name="twitter:image" content="https://neton.voltura.se/assets/social-preview.png">
+  <meta name="twitter:image:alt" content="NetOn — Internet on or off for Windows, by Voltura AB, with a green switch">
+  <link rel="icon" href="assets/favicon.ico" type="image/x-icon">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -26,31 +38,38 @@
       <section class="hero" aria-labelledby="headline">
         <div class="hero-copy">
           <p class="eyebrow"><span></span> Internet access control</p>
-          <h1 id="headline">Internet on.<br><span>Internet off.</span><br>Your call.</h1>
+          <h1 id="headline">Internet on.<br><span>Internet off.</span><br>For Windows.</h1>
           <p class="intro">Turn your PC's internet access on or off from the icon next to the clock. Switch immediately or schedule a change for later.</p>
           <a class="button download" href="https://github.com/voltura/voltura-neton/releases/download/v1.0.7/Voltura-NetOn-1.0.7-Setup-win-x64.exe"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 16v5h14v-5"/></svg>Download for Windows</a>
-          <p class="download-note">Free to use <span>·</span> Windows 10 &amp; 11 <span>·</span> No account needed</p>
+          <p class="download-note">Free to use <span>·</span> Windows 10 &amp; 11 (64-bit) <span>·</span> No account needed</p>
         </div>
         <figure class="hero-art">
           <img src="assets/neton-illustration.webp" width="768" height="1152" alt="An ivory switch glowing green, surrounded by delicate connection lines" fetchpriority="high">
-          <span class="art-label"><span aria-hidden="true">●</span> A simpler way to switch off</span>
-          <figcaption>Your connection.<br>Your choice.</figcaption>
+          <span class="art-label"><span aria-hidden="true">●</span> Internet on or off</span>
+          <figcaption>Internet on.<br>Internet off.</figcaption>
         </figure>
       </section>
       <section class="everyday" aria-labelledby="everyday-title">
-        <div class="everyday-copy"><p class="eyebrow">Small app. Simple job.</p><h2 id="everyday-title">Right next to the clock.<br>One click to switch.</h2><p>No digging through Windows settings. Click NetOn's icon to turn internet access off, then click again to bring your connections back.</p><p class="quiet">It switches Ethernet and Wi-Fi together, so another connection won't keep you online.</p></div>
+        <div class="everyday-copy"><p class="eyebrow">How it works</p><h2 id="everyday-title">Right next to the clock.<br>One click to switch.</h2><p>Left-click NetOn's icon to turn internet access on or off. Right-click for scheduling, settings, or to open the main window.</p><p class="quiet">OFF switches off your PC's network connections, including Ethernet and Wi-Fi. ON restores the connections that were on before you switched off.</p></div>
         <div class="states" aria-label="NetOn's two states">
-          <div class="state-row"><img class="tray-icon" src="assets/icon-on.png" width="58" height="58" alt="Green toggle in the on position"><div><h3>Green means on.</h3><p>You're free to connect.</p></div><span class="state-dot on-dot" aria-hidden="true"></span></div>
-          <div class="state-row"><img class="tray-icon" src="assets/icon-off.png" width="58" height="58" alt="Red toggle in the off position"><div><h3>Red means off.</h3><p>Your network connections are switched off.</p></div><span class="state-dot off-dot" aria-hidden="true"></span></div>
+          <div class="state-row"><img class="tray-icon" src="assets/icon-on.png" width="58" height="58" alt="Green toggle in the on position"><div><h3>Green means on.</h3><p>Network connections are switched on.</p></div><span class="state-dot on-dot" aria-hidden="true"></span></div>
+          <div class="state-row"><img class="tray-icon" src="assets/icon-off.png" width="58" height="58" alt="Red toggle in the off position"><div><h3>Red means off.</h3><p>Network connections are switched off.</p></div><span class="state-dot off-dot" aria-hidden="true"></span></div>
           <p class="state-footnote">Right-click the icon for settings or to exit.</p>
         </div>
       </section>
       <section class="how" id="how" aria-labelledby="how-title">
-        <div class="section-heading"><p class="eyebrow">A minute to get started</p><h2 id="how-title">Download. Install. Click.</h2></div>
-        <ol class="steps"><li><span class="step-number">01</span><h3>Download NetOn</h3><p>Get the Windows installer using the button above.</p></li><li><span class="step-number">02</span><h3>Follow the steps</h3><p>Open the downloaded file and let Setup take care of the rest.</p></li><li><span class="step-number">03</span><h3>Make it your call</h3><p>Open NetOn from the Start menu. Look for its icon next to the clock.</p></li></ol>
+        <div class="section-heading"><p class="eyebrow">Installation</p><h2 id="how-title">Download. Install. Click.</h2></div>
+        <ol class="steps"><li><span class="step-number">01</span><h3>Download NetOn</h3><p>Get the Windows installer using the button above.</p></li><li><span class="step-number">02</span><h3>Follow the steps</h3><p>Open the downloaded file and follow Setup. Leave Start NetOn checked to open it when Setup finishes.</p></li><li><span class="step-number">03</span><h3>Open NetOn</h3><p>Accept the Windows permission prompt. NetOn's icon appears next to the clock. You can also open it from the Start menu.</p></li></ol>
       </section>
-      <section class="questions" aria-labelledby="questions-title"><h2 id="questions-title">A few useful things.</h2><div class="answers"><details><summary>Where is the NetOn icon?</summary><p>Look next to the clock in the Windows taskbar. If it isn't visible, click the small arrow to see the hidden icons.</p></details><details><summary>What happens when I turn it back on?</summary><p>NetOn restores the connections that were enabled before you switched off. Your PC can then reconnect as usual.</p></details><details><summary>How do I close NetOn?</summary><p>Right-click its icon and choose “Exit NetOn”. If you exit while your connections are off, open NetOn again and switch them back on when you're ready.</p></details></div></section>
-      <section class="last-call"><div><p class="eyebrow">Internet access on your PC</p><h2>Put the internet<br>back in your hands.</h2></div><a class="button light download" href="https://github.com/voltura/voltura-neton/releases/download/v1.0.7/Voltura-NetOn-1.0.7-Setup-win-x64.exe">Get NetOn for Windows <span aria-hidden="true">↓</span></a></section>
+      <section class="questions" aria-labelledby="questions-title"><h2 id="questions-title">Using NetOn.</h2><div class="answers">
+        <details><summary>Where is the NetOn icon?</summary><p>Look next to the clock in the Windows taskbar. If it isn't visible, click the small arrow to see the hidden icons.</p></details>
+        <details><summary>What happens when I turn it back on?</summary><p>NetOn restores the connections that were on before you switched off. Your PC can then reconnect to an available network.</p></details>
+        <details><summary>Can I schedule a change?</summary><p>Right-click the icon and choose Schedule to turn internet on or off after 10 minutes, 30 minutes, 1 hour, 2 hours, 4 hours, 8 hours, or 24 hours. The menu shows a countdown and lets you cancel or replace the schedule.</p><p>Keep NetOn running in the tray until the scheduled time. Choosing Exit NetOn cancels the schedule. If your PC sleeps past that time, the change runs when NetOn resumes.</p></details>
+        <details><summary>What can I do in the main window?</summary><p>Choose Open NetOn from the tray menu. The window has an on/off switch, your external IP address with a copy button, Settings, and Show connection details. Connection details are hidden when you open the window.</p></details>
+        <details><summary>What settings are available?</summary><p>Choose a light or dark appearance, or follow your Windows setting. You can select English voice announcements or an installed Windows voice, mute sounds, start NetOn with Windows, and change the on and off icon colors.</p></details>
+        <details><summary>How do I close NetOn?</summary><p>Closing the main window hides it to the tray. Choose Exit NetOn from the tray menu or main window to close the app. Your connections stay on or off as they are. If they are off, open NetOn and turn them on to restore them.</p></details>
+      </div></section>
+      <section class="last-call"><div><p class="eyebrow">Internet on or off</p><h2>NetOn for<br>Windows.</h2></div><a class="button light download" href="https://github.com/voltura/voltura-neton/releases/download/v1.0.7/Voltura-NetOn-1.0.7-Setup-win-x64.exe">Get NetOn for Windows <span aria-hidden="true">↓</span></a></section>
     </main>
     <footer><a class="brand footer-brand" href="./"><span class="brand-switch" aria-hidden="true"><i></i></span>NetOn</a><p>A Windows app by <a href="https://voltura.se">Voltura</a>.</p><a href="https://github.com/voltura/voltura-neton">View on GitHub <span aria-hidden="true">↗</span></a></footer>
   </div>
