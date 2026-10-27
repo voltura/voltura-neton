@@ -55,6 +55,31 @@ internal static class Program
 
     private static void CheckPronunciation()
     {
+        foreach (string phrase in RecordedVoice.Phrases.Keys)
+        {
+            byte[] pcm = RecordedVoice.ReadPcm(phrase) ?? throw new Exception("Missing natural voice clip: " + phrase);
+            byte[] wave = Speech.RenderWave(phrase, RecordedVoice.Id);
+            Require(pcm.Length > Speech.SampleRate && wave.AsSpan(44).SequenceEqual(pcm), "offline recorded voice is used for: " + phrase);
+        }
+        var source = new AnnouncementAudio();
+        var idle = new byte[200];
+        Require(source.Read(idle, 0, idle.Length) == idle.Length, "audio output stays open while idle");
+        byte[] clip = RecordedVoice.ReadPcm("Internet enabled")!;
+        source.Play(clip);
+        var collected = new List<byte>();
+        var block = new byte[512];
+        while (source.EndPosition is null)
+        {
+            Array.Fill(block, (byte)99);
+            if (source.Read(block, 6, 500) != 500 || block[0] != 99 || block[511] != 99) throw new Exception("stream overwrote requested buffer bounds");
+            collected.AddRange(block.AsSpan(6, 500).ToArray());
+        }
+        Require(collected.Take(clip.Length).SequenceEqual(clip), "stream delivers first through last recording sample unchanged across buffer boundaries");
+        Require(source.EndPosition == 200 + clip.Length, "completion tracks the final sample for hardware playback confirmation");
+        source.Play(clip);
+        source.Clear();
+        source.Read(idle, 0, idle.Length);
+        Require(source.EndPosition is null && idle[0] == 1 && idle[1] == 0, "mute clears queued speech and leaves only inaudible idle samples");
         string markup = Speech.PronunciationMarkup("NetOn by Voltura AB & friends", true);
         var document = System.Xml.Linq.XDocument.Parse("<root>" + markup + "</root>");
         Require(document.Descendants("pron").Count() == 2, "company name and AB each have an explicit pronunciation");
@@ -73,13 +98,9 @@ internal static class Program
             Require(System.Text.Encoding.ASCII.GetString(input.ReadBytes(4)) == "RIFF", "speech is rendered as a WAV stream");
             input.BaseStream.Position = 24;
             int rate = input.ReadInt32();
-            Require(rate == Speech.SampleRate, "cue and speech share the expected PCM sample rate");
-            int cueBytes = rate * 2 * Speech.CueMilliseconds / 1000;
-            var cue = wave.Skip(44).Take(cueBytes).ToArray();
-            Require(cue.Take(rate * 2 / 2).Any(b => b != 0), text + " begins with real audio, not discarded digital silence");
-            Require(cue.Skip(cueBytes - rate / 5).Any(b => b != 0), "wake-up cue continues until the speech lead-in");
-            Require(wave.Skip(44 + cueBytes).Any(b => b != 0), "complete phrase follows in the same WAV stream");
-            Require(wave.Length > 44 + cueBytes + rate, "speech has at least half a second of audio after the cue");
+            Require(rate == Speech.SampleRate, "recording has the expected PCM sample rate");
+            Require(wave.AsSpan(44).SequenceEqual(RecordedVoice.ReadPcm(text)), "entire original recording preserved without beep or trimming");
+
         }
     }
     private static void CheckIcons()
@@ -111,13 +132,25 @@ internal static class Program
     {
         Directory.CreateDirectory(directory);
         var service = new FakeService { Snapshot = [new Adapter("Ethernet", Guid.NewGuid(), "Intel Ethernet Controller", "Connected", 1), new Adapter("Wi-Fi", Guid.NewGuid(), "Wireless network adapter", "Disconnected", 1)] };
-        using var form = new MainForm(service, new AppSettings { MuteAllSounds = true }, false);
+        var previewSettings = new AppSettings { MuteAllSounds = true, Theme = "Light" };
+        using var form = new MainForm(service, previewSettings, false);
         _ = form.Handle;
         void Prepare(System.Windows.Forms.Control control) { _ = control.Handle; control.PerformLayout(); foreach (System.Windows.Forms.Control child in control.Controls) Prepare(child); }
         Prepare(form);
         await form.RefreshAsync();
         Prepare(form);
+        var adapterControl = Control<ComboBox>(form, "AdapterSelector");
+        Require(adapterControl.Width > 150 && adapterControl.Height > 20 && adapterControl.SelectedIndex >= 0, "themed dropdown has a usable size and a selected adapter");
+        Console.WriteLine($"Dropdown: {adapterControl.Bounds}, selected={adapterControl.SelectedItem}");
         using (var on = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(on, new Rectangle(Point.Empty, form.Size)); on.Save(Path.Combine(directory, "neton-app-on.png")); }
+        previewSettings.Theme = "Dark"; form.ApplyTheme(); Prepare(form);
+        using (var dark = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(dark, new Rectangle(Point.Empty, form.Size)); dark.Save(Path.Combine(directory, "neton-app-dark.png")); }
+        Require(form.BackColor == AppTheme.Paper && AppTheme.Dark, "dark theme applies to the app window");
+        var contextMenu = (NotifyIcon)typeof(MainForm).GetField("tray", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+        var menu = contextMenu.ContextMenuStrip!; _ = menu.Handle; menu.PerformLayout(); menu.Size = menu.PreferredSize;
+        using (var menuImage = new Bitmap(menu.Width, menu.Height)) { menu.DrawToBitmap(menuImage, menu.ClientRectangle); menuImage.Save(Path.Combine(directory, "neton-menu-dark.png")); }
+        previewSettings.Theme = "Light"; form.ApplyTheme(); Prepare(form);
+        Require(!AppTheme.Dark, "light theme applies independently of the Windows setting");
         await form.ChangeAsync(false);
         Prepare(form);
         using (var off = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(off, new Rectangle(Point.Empty, form.Size)); off.Save(Path.Combine(directory, "neton-app-off.png")); }

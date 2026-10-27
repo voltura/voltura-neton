@@ -3,12 +3,13 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>Voltura.NetOn</AssemblyName>
     <Product>Voltura NetOn</Product>
-    <Version>1.0.4</Version>
+    <Version>1.0.5</Version>
     <Company>Voltura</Company>
     <ApplicationIcon>appicon.ico</ApplicationIcon>
     <SelfContained>false</SelfContained>
@@ -16,7 +17,12 @@
   <ItemGroup>
     <Compile Remove="verification/**/*.cs" />
     <Compile Remove="publish/**/*.cs" />
+    <None Update="THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" />
     <InternalsVisibleTo Include="NetOn.Verification" />
     <EmbeddedResource Include="assets/neton-illustration.png" LogicalName="Voltura.NetOn.Artwork" />
+    <EmbeddedResource Include="assets/voice/*.wav" LogicalName="Voltura.NetOn.Voice.%(Filename)%(Extension)" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="NAudio.WinMM" Version="2.3.0" />
   </ItemGroup>
 </Project>

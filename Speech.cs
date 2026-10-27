@@ -1,5 +1,5 @@
 using System.Collections.Concurrent;
-using System.Media;
+using NAudio.Wave;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Security;
@@ -13,26 +13,40 @@ internal sealed class Speech : IDisposable
     private readonly Func<string?> preferredVoice;
     public Speech(Func<string?>? preferredVoice = null) => this.preferredVoice = preferredVoice ?? (() => null);
     internal const int SampleRate = 22050;
-    internal const int CueMilliseconds = 1200;
     private readonly BlockingCollection<string> pending = new(1);
     private readonly ManualResetEventSlim shutdown = new();
     private readonly object gate = new();
-    private SoundPlayer? player;
     private bool disposed;
+    private volatile bool muted;
+    private int playbackGeneration;
     private Thread? worker;
+
+    public void SetMuted(bool value)
+    {
+        lock (gate)
+        {
+            if (disposed) return;
+            muted = value;
+            if (value) { Interlocked.Increment(ref playbackGeneration); pending.TryTake(out _); }
+            else EnsureWorker();
+        }
+    }
+
+    private void EnsureWorker()
+    {
+        if (worker is not null) return;
+        worker = new Thread(PlayAnnouncements) { IsBackground = true, Name = "NetOn speech" };
+        worker.SetApartmentState(ApartmentState.STA);
+        worker.Start();
+    }
 
     public void Say(string text)
     {
         lock (gate)
         {
-            if (disposed) return;
-            if (worker is null)
-            {
-                worker = new Thread(PlayAnnouncements) { IsBackground = true, Name = "NetOn speech" };
-                worker.SetApartmentState(ApartmentState.STA);
-                worker.Start();
-            }
-            // Finish the current phrase rather than cutting it off; retain only the latest pending one.
+            if (disposed || muted) return;
+            EnsureWorker();
+            // Finish the current recording; retain only the newest waiting announcement.
             pending.TryTake(out _);
             pending.TryAdd(text);
         }
@@ -40,31 +54,56 @@ internal sealed class Speech : IDisposable
 
     private void PlayAnnouncements()
     {
-        foreach (string text in pending.GetConsumingEnumerable())
+        WaveOutEvent? output = null;
+        var source = new AnnouncementAudio();
+        try
         {
-            if (shutdown.IsSet) return;
-            try
+            while (!shutdown.IsSet)
             {
-                byte[] wave = RenderWave(text, preferredVoice());
-                using var stream = new MemoryStream(wave);
-                using var output = new SoundPlayer(stream);
-                output.Load();
-                lock (gate)
+                if (muted)
                 {
-                    if (disposed) return;
-                    player = output;
-                    output.Play();
+                    output?.Dispose(); output = null;
+                    source.Clear();
+                    shutdown.Wait(50);
+                    continue;
                 }
-                // Cue and speech share one audio stream, with no device restart between them.
-                int duration = (wave.Length - 44) * 1000 / (SampleRate * 2) + 250;
-                shutdown.Wait(duration);
-                lock (gate) { output.Stop(); player = null; }
-            }
-            catch (Exception ex) when (ex is COMException or InvalidOperationException or ArgumentException or IOException or TimeoutException or Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
-            {
-                // Missing speech/audio must not block network controls or Exit.
+                try
+                {
+                    if (output is null || output.PlaybackState == PlaybackState.Stopped)
+                    {
+                        output?.Dispose();
+                        source = new AnnouncementAudio();
+                        output = new WaveOutEvent { DesiredLatency = 150, NumberOfBuffers = 3 };
+                        output.Init(source);
+                        output.Play();
+                        // Warm the endpoint once, without a beep, before sending any speech.
+                        for (int i = 0; i < 24 && !muted && !shutdown.IsSet; i++) shutdown.Wait(50);
+                    }
+                    if (muted || shutdown.IsSet || !pending.TryTake(out string? text, 50)) continue;
+                    int generation = Volatile.Read(ref playbackGeneration);
+                    byte[] wave = RenderWave(text, preferredVoice());
+                    if (muted || shutdown.IsSet || generation != Volatile.Read(ref playbackGeneration)) continue;
+                    source.Play(wave[44..]);
+                    // Wait for the actual device position, not a guessed recording duration.
+                    // Compare modulo 32 bits because WinMM's byte counter wraps on long-running sessions.
+                    while (!shutdown.IsSet && !muted && generation == Volatile.Read(ref playbackGeneration))
+                    {
+                        if (output.PlaybackState != PlaybackState.Playing) break;
+                        if (source.EndPosition is long end && unchecked((int)((uint)output.GetPosition() - (uint)end)) >= 0) break;
+                        shutdown.Wait(25);
+                    }
+                    source.Clear();
+                }
+                catch (Exception ex) when (ex is COMException or NAudio.MmException or InvalidOperationException or ArgumentException or IOException or TimeoutException or Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
+                {
+                    // Audio failure must never block network controls or Exit. Retry on the next request.
+                    output?.Dispose(); output = null;
+                    pending.TryTake(out _);
+                    shutdown.Wait(250);
+                }
             }
         }
+        finally { output?.Dispose(); }
     }
 
     internal static IReadOnlyList<VoiceChoice> ListVoices()
@@ -98,6 +137,7 @@ internal sealed class Speech : IDisposable
 
     internal static byte[] RenderWave(string text, string? voiceId = null)
     {
+        if (voiceId is null or RecordedVoice.Id && RecordedVoice.ReadPcm(text) is { } recording) return WrapPcm(recording);
         object? voice = null, memory = null;
         try
         {
@@ -130,29 +170,26 @@ internal sealed class Speech : IDisposable
             bool english = language.Split(';').Any(part => int.TryParse(part, System.Globalization.NumberStyles.HexNumber, null, out int id) && (id & 0x3ff) == 9);
             ((dynamic)voice).Speak(PronunciationMarkup(text, english), 8);
             byte[] speech = (byte[])output.GetData();
-            int cueSamples = SampleRate * CueMilliseconds / 1000;
-            int dataLength = cueSamples * 2 + speech.Length;
-            using var wave = new MemoryStream(44 + dataLength);
-            using var writer = new BinaryWriter(wave, Encoding.ASCII, leaveOpen: true);
-            writer.Write(Encoding.ASCII.GetBytes("RIFF")); writer.Write(36 + dataLength);
-            writer.Write(Encoding.ASCII.GetBytes("WAVEfmt ")); writer.Write(16);
-            writer.Write((short)1); writer.Write((short)1); writer.Write(SampleRate);
-            writer.Write(SampleRate * 2); writer.Write((short)2); writer.Write((short)16);
-            writer.Write(Encoding.ASCII.GetBytes("data")); writer.Write(dataLength);
-            for (int i = 0; i < cueSamples; i++)
-            {
-                // A real, quiet signal wakes outputs that discard digital silence.
-                double envelope = Math.Min(1, Math.Min(i, cueSamples - 1 - i) / (SampleRate * .015));
-                writer.Write((short)(2200 * envelope * Math.Sin(2 * Math.PI * 523.25 * i / SampleRate)));
-            }
-            writer.Write(speech);
-            return wave.ToArray();
+            return WrapPcm(speech);
         }
         finally
         {
             if (voice is not null && Marshal.IsComObject(voice)) Marshal.FinalReleaseComObject(voice);
             if (memory is not null && Marshal.IsComObject(memory)) Marshal.FinalReleaseComObject(memory);
         }
+    }
+
+    internal static byte[] WrapPcm(byte[] speech)
+    {
+        using var wave = new MemoryStream(44 + speech.Length);
+        using var writer = new BinaryWriter(wave, Encoding.ASCII, leaveOpen: true);
+        writer.Write(Encoding.ASCII.GetBytes("RIFF")); writer.Write(36 + speech.Length);
+        writer.Write(Encoding.ASCII.GetBytes("WAVEfmt ")); writer.Write(16);
+        writer.Write((short)1); writer.Write((short)1); writer.Write(SampleRate);
+        writer.Write(SampleRate * 2); writer.Write((short)2); writer.Write((short)16);
+        writer.Write(Encoding.ASCII.GetBytes("data")); writer.Write(speech.Length);
+        writer.Write(speech);
+        return wave.ToArray();
     }
 
     public void Dispose()
@@ -163,7 +200,6 @@ internal sealed class Speech : IDisposable
             disposed = true;
             shutdown.Set();
             pending.CompleteAdding();
-            player?.Stop();
         }
     }
 }

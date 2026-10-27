@@ -1,0 +1,82 @@
+[
+  {
+    "id": "internet-on",
+    "text": "Internet enabled",
+    "spoken": "Internet is on.",
+    "phonemes": null,
+    "voice": "user-provided recording",
+    "speed": 1,
+    "sampleRate": 22050,
+    "duration": 2.32
+  },
+  {
+    "id": "internet-off",
+    "text": "Internet disabled",
+    "spoken": "Internet is off.",
+    "phonemes": null,
+    "voice": "user-provided recording",
+    "speed": 1,
+    "sampleRate": 22050,
+    "duration": 2.82
+  },
+  {
+    "id": "about",
+    "text": "NetOn by Voltura AB",
+    "spoken": "NetOn by Voltura AB",
+    "phonemes": null,
+    "voice": "user-provided recording",
+    "speed": 1,
+    "sampleRate": 22050,
+    "duration": 3.56
+  },
+  {
+    "id": "startup-on",
+    "text": "NetOn set to start with Windows",
+    "spoken": "NetOn will start with Windows.",
+    "phonemes": null,
+    "voice": "user-provided recording",
+    "speed": 1,
+    "sampleRate": 22050,
+    "duration": 3.3
+  },
+  {
+    "id": "startup-off",
+    "text": "NetOn will not start with Windows",
+    "spoken": "NetOn will not start with Windows.",
+    "phonemes": null,
+    "voice": "user-provided recording",
+    "speed": 1,
+    "sampleRate": 22050,
+    "duration": 3.6
+  },
+  {
+    "id": "colors-reset",
+    "text": "Colors reset",
+    "spoken": "Colors reset.",
+    "phonemes": null,
+    "voice": "user-provided recording",
+    "speed": 1,
+    "sampleRate": 22050,
+    "duration": 2.66
+  },
+  {
+    "id": "foreground",
+    "text": "Please select foreground color",
+    "spoken": "Please select a foreground color.",
+    "phonemes": null,
+    "voice": "user-provided recording",
+    "speed": 1,
+    "sampleRate": 22050,
+    "duration": 3.72
+  },
+  {
+    "id": "background",
+    "text": "Please select background color",
+    "spoken": "Please select a background color.",
+    "phonemes": null,
+    "voice": "user-provided recording",
+    "speed": 1,
+    "sampleRate": 22050,
+    "duration": 3.2
+  }
+]

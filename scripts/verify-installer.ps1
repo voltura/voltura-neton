@@ -1,4 +1,4 @@
-param([string]$Version = '1.0.4')
+param([string]$Version = '1.0.5')
 $ErrorActionPreference = 'Stop'
 $netonRoot = Split-Path -Parent $PSScriptRoot
 $releaseRoot = Join-Path $netonRoot "artifacts\release-$Version-framework"
@@ -10,10 +10,12 @@ $uninstallKey = "HKCU:\$uninstallRelativeKey"
 $menu = Join-Path ([Environment]::GetFolderPath('Programs')) $menuName
 $testRoot = Join-Path $netonRoot ('artifacts\installer-smoke-' + $testId)
 $installer = Join-Path $testRoot 'SetupVerification.exe'
-$isolationArgs = @("/DUNINSTALL_KEY=$uninstallRelativeKey", "/DINSTALLER_KEY=$installerRelativeKey", "/DMENU_NAME=$menuName")
+$stopStub = Join-Path $testRoot 'stop-test.ps1'
+$isolationArgs = @("/DUNINSTALL_KEY=$uninstallRelativeKey", "/DINSTALLER_KEY=$installerRelativeKey", "/DMENU_NAME=$menuName", "/DTEST_UPGRADE_HELPER=$stopStub")
 $preferences = Join-Path $env:LOCALAPPDATA 'Voltura\NetOn\preferences.json'
 $originalPreferences = if (Test-Path -LiteralPath $preferences) { (Get-FileHash -LiteralPath $preferences).Hash } else { '' }
 New-Item -ItemType Directory -Path $testRoot | Out-Null
+'param($InstallingVersion); exit 0' | Set-Content -LiteralPath $stopStub
 & 'C:\Program Files (x86)\NSIS\makensis.exe' /V2 "/DAPP_VERSION=$Version" "/DOUTPUT_FILE=$installer" "/DINSTALL_FILES=$releaseRoot\install-files.nsh" "/DUNINSTALL_FILES=$releaseRoot\uninstall-files.nsh" @isolationArgs (Join-Path $netonRoot 'installer\NetOn.nsi')
 if ($LASTEXITCODE -ne 0) { throw 'Isolated verification installer build failed' }
 foreach ($pass in 1..2) {

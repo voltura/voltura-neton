@@ -5,11 +5,20 @@ namespace Voltura.NetOn;
 
 internal static class AppTheme
 {
-    public static readonly Color Paper = Color.FromArgb(247, 248, 242);
-    public static readonly Color Ink = Color.FromArgb(23, 44, 34);
-    public static readonly Color Muted = Color.FromArgb(99, 115, 102);
+    public static bool Dark { get; private set; }
+    public static Color Paper => Dark ? Color.FromArgb(19, 27, 24) : Color.FromArgb(247, 248, 242);
+    public static Color Surface => Dark ? Color.FromArgb(29, 39, 33) : Color.FromArgb(255, 255, 251);
+    public static Color Ink => Dark ? Color.FromArgb(237, 243, 232) : Color.FromArgb(23, 44, 34);
+    public static Color Muted => Dark ? Color.FromArgb(166, 183, 169) : Color.FromArgb(99, 115, 102);
+    public static Color Border => Dark ? Color.FromArgb(63, 79, 66) : Color.FromArgb(206, 216, 199);
+    public static Color Hover => Dark ? Color.FromArgb(44, 65, 50) : Color.FromArgb(228, 235, 220);
+    public static Color Disabled => Dark ? Color.FromArgb(36, 45, 38) : Color.FromArgb(234, 237, 229);
+    public static Color Positive => Dark ? Color.FromArgb(123, 211, 155) : Green;
+    public static Color Negative => Dark ? Color.FromArgb(243, 143, 132) : Red;
     public static readonly Color Green = Color.FromArgb(29, 101, 68);
     public static readonly Color Red = Color.FromArgb(166, 61, 55);
+    public static bool ResolveDark(string choice) => choice == "Dark" || (choice != "Light" && Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1) is int value && value == 0);
+    public static void Set(string choice) => Dark = ResolveDark(choice);
     public static GraphicsPath Rounded(RectangleF rect, float radius)
     {
         var path = new GraphicsPath();
@@ -45,10 +54,10 @@ internal sealed class ModernButton : Button
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         var rect = new RectangleF(1, 1, Width - 3, Height - 3);
         using var shape = AppTheme.Rounded(rect, 9 * DeviceDpi / 96f);
-        Color fill = !Enabled ? Color.FromArgb(234, 237, 229) : Quiet ? (hovered ? Color.FromArgb(228, 235, 220) : AppTheme.Paper) : hovered ? ControlPaint.Dark(Accent, .12f) : Accent;
+        Color fill = !Enabled ? AppTheme.Disabled : Quiet ? (hovered ? AppTheme.Hover : AppTheme.Paper) : hovered ? ControlPaint.Dark(Accent, .12f) : Accent;
         using var brush = new SolidBrush(fill); e.Graphics.FillPath(brush, shape);
-        if (Quiet) { using var border = new Pen(Color.FromArgb(206, 216, 199)); e.Graphics.DrawPath(border, shape); }
-        var textColor = !Enabled ? Color.FromArgb(137, 147, 133) : Quiet ? AppTheme.Ink : Color.White;
+        if (Quiet) { using var border = new Pen(AppTheme.Border); e.Graphics.DrawPath(border, shape); }
+        var textColor = !Enabled ? AppTheme.Muted : Quiet ? AppTheme.Ink : Color.White;
         TextRenderer.DrawText(e.Graphics, Text, Font, Rectangle.Round(rect), textColor, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         if (Focused && ShowFocusCues) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle, -5, -5), textColor, fill);
     }

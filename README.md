@@ -22,9 +22,11 @@ OFF disables all enabled network adapters, including Ethernet, Wi-Fi, Bluetooth 
 
 The dropdown under **Network adapters…** selects the adapter whose details you view; it does not limit the global ON/OFF action. A connected adapter is selected initially, and your detail selection is remembered by GUID.
 
-The original speech announcements, mute setting, customizable icon colors, reset colors, start-with-Windows setting, external-IP tooltip/copying, About, and tray toggle are included. Speech begins with a quiet 1.2-second audible cue, followed by the complete phrase in the same audio stream. This wakes outputs that discard digital silence. An active phrase finishes before the latest pending announcement plays. The default ON background is green as requested, with red for OFF. Color settings are available for both states.
+The original speech announcements, mute setting, customizable icon colors, reset colors, start-with-Windows setting, external-IP tooltip/copying, About, and tray toggle are included. Recordings play without a beep. The audio output stays open quietly between announcements to prevent clipped beginnings, and each phrase finishes before the latest waiting announcement plays. The default ON background is green as requested, with red for OFF. Color settings are available for both states.
 
-The app window matches the installer artwork with a soft ivory background and green/red switch graphics. Tray and application icons have transparent backgrounds and multiple sizes for sharp rendering at different display scales. Under **Settings → Voice**, choose an installed Windows voice or the recommended option (Zira when available). Announcements use gentler pacing and an explicit “Voltuura, Aabe” pronunciation for Voltura AB; speech remains available offline.
+The app window matches the installer artwork, with **Light**, **Dark**, and **Follow Windows** choices under **Settings → Appearance**. The tray menu follows the same theme. Tray and application icons have transparent backgrounds and multiple sizes for sharp rendering at different display scales.
+
+Under **Settings → Voice**, **Recorded voice (offline)** plays the publisher's own supplied recordings for every announcement, including the company name. Nothing is downloaded or synthesized during playback. No voice model or generator is included in NetOn. Installed Windows voices remain available as alternatives. [Recording sources and credits](assets/voice/README.md).
 
 Windows requires administrator rights to change adapter state. The launcher requests elevation at startup; canceling that prompt exits without making network changes. The startup registration uses the launcher, which also requests elevation when launched at sign-in. There are no per-toggle elevation helpers.
 
@@ -50,9 +52,11 @@ Build release packages with [NSIS](https://nsis.sourceforge.io/) installed:
 .\scripts\verify-installer.ps1
 ```
 
-Release files are placed in `artifacts\release-1.0.4-framework`. The build creates a fresh framework-dependent payload, checks that runtime binaries are absent, builds the installer, and creates the portable ZIP. No checksum files are generated; GitHub provides asset digests.
+Release files are placed in `artifacts\release-1.0.5-framework`. The build creates a fresh framework-dependent payload, checks that runtime binaries are absent, builds the installer, and creates the portable ZIP. No checksum files are generated; GitHub provides asset digests.
 
-The installer is per-user and does not launch NetOn automatically. If .NET 10 Desktop Runtime x64 is missing, it downloads the current stable release from Microsoft's official metadata, checks its SHA-512 digest and Microsoft signature, requests elevation for Microsoft's installer, runs it without restarting Windows, rechecks the dependency, and continues. Download failure, cancellation, or failed component setup prevents a partial NetOn installation.
+The installer is per-user and offers a checked-by-default **Start NetOn** option on completion. It identifies an older running NetOn in the current session, verifies its product/version, closes it before replacing files, and starts the new copy when Setup finishes. In silent upgrade mode it restarts a copy that was stopped for the upgrade. A same/newer running version is never forcibly stopped. The upgrade helper supports graceful exit on newer NetOn versions and waits before falling back to stopping an older process.
+
+If .NET 10 Desktop Runtime x64 is missing, Setup downloads the current stable release from Microsoft's official metadata, checks its SHA-512 digest and Microsoft signature, requests elevation for Microsoft's installer, runs it without restarting Windows, rechecks the dependency, and continues. Download failure, cancellation, or failed component setup prevents a partial NetOn installation.
 
 Uninstall removes only the packaged files and installer integration, preserving preferences and unrelated files. Verification covers silent installation, upgrade, uninstall, and both failure and continuation through the component-setup flow, without launching NetOn or changing adapter state. The checks use isolated registry keys and shortcuts, preserving an existing user installation. Run `scripts/verify-runtime-bootstrap.ps1` for download validation, integrity/signature rejection, installation failure, cancellation, and reboot-code checks using simulated installers; it does not install .NET on the development PC.
 

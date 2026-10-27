@@ -26,6 +26,7 @@ internal static class Program
         using var form = new MainForm();
         _ = form.Handle;
         instance.Listen(form.RequestShow);
+        instance.ListenForExit(form.RequestExit);
         form.Start();
         Application.Run(form);
         return 0;

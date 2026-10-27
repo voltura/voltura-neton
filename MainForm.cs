@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 namespace Voltura.NetOn;
 
 internal sealed class MainForm : Form
@@ -9,7 +10,8 @@ internal sealed class MainForm : Form
     private readonly bool desktopFeatures;
     private readonly CancellationTokenSource lifetime = new();
     private readonly Speech speech;
-    private readonly ComboBox adapters = new() { Name = "AdapterSelector", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Top, AccessibleName = "Network adapter" };
+    private readonly Font menuFont = new("Segoe UI", 10);
+    private readonly ThemedComboBox adapters = new() { Name = "AdapterSelector", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Top, AccessibleName = "Network adapter" };
     private readonly Label status = new() { AutoSize = true, Text = "Checking…", Font = new Font("Segoe UI", 23, FontStyle.Regular), Margin = new Padding(0, 17, 0, 0) };
     private readonly SwitchGlyph stateGlyph = new() { Margin = new Padding(0, 0, 4, 0), Size = new Size(90, 75) };
     private readonly Label stateDescription = new() { AutoSize = true, MaximumSize = new Size(420, 0), Font = new Font("Segoe UI", 10), ForeColor = AppTheme.Muted, Margin = new Padding(0, 1, 0, 6) };
@@ -28,11 +30,13 @@ internal sealed class MainForm : Form
     private bool? announcedState;
     private string externalIp = "";
     private Adapter? Selected => adapters.SelectedItem as Adapter;
+    [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
 
     public MainForm(IAdapterService? service = null, AppSettings? settings = null, bool desktopFeatures = true)
     {
         this.service = service ?? new NetworkAdapters();
         preferences = settings ?? AppSettings.Load();
+        AppTheme.Set(preferences.Theme);
         speech = new Speech(() => preferences.VoiceId);
         this.desktopFeatures = desktopFeatures;
         internetSwitch = new InternetSwitch(this.service, preferences, () => { if (desktopFeatures) preferences.Save(); });
@@ -106,10 +110,11 @@ internal sealed class MainForm : Form
         root.Controls.Add(footer, 0, 2);
         Controls.Add(root);
         var menu = new ContextMenuStrip();
+        menu.Opening += (_, _) => ApplyTheme();
         menu.Items.Add("About NetOn", null, (_, _) =>
         {
             Say("NetOn by Voltura AB");
-            MessageBox.Show(this, "NetOn by Voltura AB\nVersion 1.0.4\nhttps://voltura.github.io/voltura-neton/\n\nFree for all.", "About NetOn", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, "NetOn by Voltura AB\nVersion 1.0.5\nhttps://voltura.github.io/voltura-neton/\n\nFree for all.", "About NetOn", MessageBoxButtons.OK, MessageBoxIcon.Information);
         });
         menu.Items.Add("Network adapters…", null, (_, _) => ShowWindow());
         menu.Items.Add(trayToggle);
@@ -135,10 +140,10 @@ internal sealed class MainForm : Form
         });
         settingsMenu.DropDownItems.Add(colors);
         var mute = new ToolStripMenuItem("Mute all sounds") { Checked = preferences.MuteAllSounds };
-        mute.Click += (_, _) => { preferences.MuteAllSounds = !preferences.MuteAllSounds; mute.Checked = preferences.MuteAllSounds; SavePreferences(); };
+        mute.Click += (_, _) => { preferences.MuteAllSounds = !preferences.MuteAllSounds; mute.Checked = preferences.MuteAllSounds; if (desktopFeatures) speech.SetMuted(preferences.MuteAllSounds); SavePreferences(); };
         settingsMenu.DropDownItems.Add(mute);
         var voices = new ToolStripMenuItem("Voice");
-        var defaultVoice = new ToolStripMenuItem("Recommended") { Checked = preferences.VoiceId is null };
+        var defaultVoice = new ToolStripMenuItem("Recorded voice (offline)") { Checked = preferences.VoiceId is null or RecordedVoice.Id };
         voices.DropDownItems.Add(defaultVoice);
         defaultVoice.Click += (_, _) =>
         {
@@ -161,6 +166,19 @@ internal sealed class MainForm : Form
             }
         }
         settingsMenu.DropDownItems.Add(voices);
+        var themeMenu = new ToolStripMenuItem("Appearance");
+        foreach (string theme in new[] { "System", "Light", "Dark" })
+        {
+            var choice = new ToolStripMenuItem(theme == "System" ? "Follow Windows" : theme) { Checked = preferences.Theme == theme };
+            choice.Click += (_, _) =>
+            {
+                preferences.Theme = theme;
+                foreach (ToolStripMenuItem option in themeMenu.DropDownItems) option.Checked = option == choice;
+                SavePreferences(); ApplyTheme();
+            };
+            themeMenu.DropDownItems.Add(choice);
+        }
+        settingsMenu.DropDownItems.Add(themeMenu);
         menu.Items.Add(settingsMenu);
         menu.Items.Add(copyIp);
         menu.Items.Add(new ToolStripSeparator());
@@ -182,12 +200,13 @@ internal sealed class MainForm : Form
             error.Text = "";
             Render();
         };
-        timer.Tick += async (_, _) => await RefreshAsync();
+        timer.Tick += async (_, _) => { if (preferences.Theme == "System" && AppTheme.Dark != AppTheme.ResolveDark("System")) ApplyTheme(); await RefreshAsync(); };
         FormClosing += (_, e) =>
         {
             if (!exiting && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); }
         };
         Render();
+        ApplyTheme();
         ResumeLayout(true);
     }
 
@@ -198,7 +217,7 @@ internal sealed class MainForm : Form
     {
         _ = RefreshAsync();
         timer.Start();
-        if (desktopFeatures) _ = ReadExternalIpAsync();
+        if (desktopFeatures) { speech.SetMuted(preferences.MuteAllSounds); _ = ReadExternalIpAsync(); }
     }
 
     public void RequestShow()
@@ -206,6 +225,11 @@ internal sealed class MainForm : Form
         if (exiting || IsDisposed) return;
         try { BeginInvoke(() => { if (!exiting) ShowWindow(); }); }
         catch (InvalidOperationException) { }
+    }
+    public void RequestExit()
+    {
+        if (exiting || IsDisposed) return;
+        try { BeginInvoke(ExitApp); } catch (InvalidOperationException) { }
     }
 
     private void ShowWindow() { showRequested = true; Show(); WindowState = FormWindowState.Normal; Activate(); }
@@ -312,7 +336,7 @@ internal sealed class MainForm : Form
         }
         status.Text = anyEnabled ? "Internet is on" : "Internet is off";
         stateDescription.Text = anyEnabled ? "Ready when you are. Switch off for a little offline time." : "A little peace and quiet. Switch on when you're ready.";
-        status.ForeColor = anyEnabled ? AppTheme.Green : AppTheme.Red;
+        status.ForeColor = anyEnabled ? AppTheme.Positive : AppTheme.Negative;
         detail.Text = Selected is { } adapter ? $"{adapter.Description}\n{adapter.Name}: {adapter.Status}\nEnabled adapters: {snapshot.Count(a => a.Enabled)} of {snapshot.Count}" : $"Enabled adapters: {snapshot.Count(a => a.Enabled)} of {snapshot.Count}";
         trayToggle.Text = $"Turn internet {(anyEnabled ? "OFF" : "ON")}";
         string tip = $"NetOn: Internet {(anyEnabled ? "ON" : "OFF")}";
@@ -326,6 +350,37 @@ internal sealed class MainForm : Form
     }
 
     private void Say(string text) { if (desktopFeatures && !preferences.MuteAllSounds && !exiting) speech.Say(text); }
+    internal void ApplyTheme()
+    {
+        AppTheme.Set(preferences.Theme);
+        void PaintControls(Control control)
+        {
+            control.BackColor = control is ComboBox ? AppTheme.Surface : AppTheme.Paper;
+            control.ForeColor = control is Label label && label.Font.Size <= 11 ? AppTheme.Muted : AppTheme.Ink;
+            foreach (Control child in control.Controls) PaintControls(child);
+            control.Invalidate();
+        }
+        PaintControls(this);
+        error.ForeColor = AppTheme.Negative;
+        void ThemeMenu(ToolStrip strip)
+        {
+            strip.Renderer = new ThemedMenuRenderer(); strip.BackColor = AppTheme.Surface; strip.ForeColor = AppTheme.Ink;
+            strip.Font = menuFont;
+            foreach (ToolStripItem item in strip.Items)
+            {
+                item.ForeColor = AppTheme.Ink;
+                if (item is ToolStripMenuItem entry)
+                {
+                    entry.Padding = new Padding(8, 6, 8, 6);
+                    if (entry.HasDropDownItems) ThemeMenu(entry.DropDown);
+                }
+            }
+        }
+        if (tray.ContextMenuStrip is { } menu) ThemeMenu(menu);
+        if (IsHandleCreated) { int dark = AppTheme.Dark ? 1 : 0; DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int)); }
+        Render();
+    }
+    protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); int dark = AppTheme.Dark ? 1 : 0; DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int)); }
     private void Report(Exception ex) { if (exiting || IsDisposed) return; error.Text = ex.Message; }
     private void SavePreferences() { if (!desktopFeatures) return; try { preferences.Save(); } catch (Exception ex) { Report(ex); } }
 
@@ -389,6 +444,7 @@ internal sealed class MainForm : Form
             exiting = true; lifetime.Cancel(); timer.Dispose();
             tray.Visible = false; tray.ContextMenuStrip?.Dispose(); tray.Dispose();
             speech.Dispose(); onIcon.Dispose(); offIcon.Dispose(); unknownIcon.Dispose(); customOn?.Dispose(); customOff?.Dispose();
+            menuFont.Dispose();
         }
         base.Dispose(disposing);
     }

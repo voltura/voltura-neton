@@ -1,5 +1,5 @@
 param(
-    [string]$Version = '1.0.4',
+    [string]$Version = '1.0.5',
     [string]$MakeNsis = 'C:\Program Files (x86)\NSIS\makensis.exe'
 )
 $ErrorActionPreference = 'Stop'
@@ -23,6 +23,7 @@ ON restores the adapters enabled before OFF. Exiting while OFF leaves them disab
 
 https://github.com/voltura/voltura-neton
 '@ | Set-Content -LiteralPath (Join-Path $payload 'READ-ME.txt') -Encoding utf8
+Copy-Item -LiteralPath (Join-Path $netonRoot 'assets\voice\README.md') -Destination (Join-Path $payload 'VOICE-CREDITS.txt')
 $installLines = [Collections.Generic.List[string]]::new()
 $uninstallLines = [Collections.Generic.List[string]]::new()
 $directories = [Collections.Generic.HashSet[string]]::new()

@@ -56,6 +56,8 @@ VIAddVersionKey "LegalCopyright" "Voltura AB"
 !insertmacro MUI_PAGE_INSTFILES
 !define MUI_FINISHPAGE_TITLE "You're all set."
 !define MUI_FINISHPAGE_TEXT "Open Voltura NetOn from the Start menu.$\r$\n$\r$\nClick its icon next to the clock to turn internet on or off. Right-click for settings."
+!define MUI_FINISHPAGE_RUN "$INSTDIR\Voltura.NetOn.exe"
+!define MUI_FINISHPAGE_RUN_TEXT "Start NetOn"
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
@@ -63,6 +65,36 @@ VIAddVersionKey "LegalCopyright" "Voltura AB"
 Var RuntimeRoot
 Var RuntimeFound
 Var RuntimeExitCode
+Var HadRunningNetOn
+
+Function ClosePreviousVersion
+  InitPluginsDir
+  SetOutPath "$PLUGINSDIR"
+  !ifdef TEST_UPGRADE_HELPER
+    File "/oname=stop-previous-version.ps1" "${TEST_UPGRADE_HELPER}"
+  !else
+    File "/oname=stop-previous-version.ps1" "..\scripts\stop-previous-version.ps1"
+  !endif
+  nsExec::ExecToLog '$\"$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe$\" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $\"$PLUGINSDIR\stop-previous-version.ps1$\" -InstallingVersion ${APP_VERSION}.0'
+  Pop $0
+  ${If} $0 == 10
+    StrCpy $HadRunningNetOn 1
+  ${ElseIf} $0 != 0
+    IfSilent close_failed
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Setup could not close the older NetOn. Exit it from its tray menu and try again."
+close_failed:
+    SetErrorLevel 1618
+    Quit
+  ${EndIf}
+FunctionEnd
+
+Function .onInstSuccess
+  IfSilent 0 start_done
+  ${If} $HadRunningNetOn == 1
+    Exec '$\"$INSTDIR\Voltura.NetOn.exe$\"'
+  ${EndIf}
+start_done:
+FunctionEnd
 Function CheckDesktopRuntime
   StrCpy $RuntimeFound 0
   FindFirst $0 $1 "$RuntimeRoot\shared\Microsoft.WindowsDesktop.App\10.0.*"
@@ -160,8 +192,9 @@ ${PREFIX}ready:
 !macroend
 Section "Voltura NetOn (required)" MainSection
   SectionIn RO
-  !insertmacro CheckClosed "install_"
   Call EnsureDesktopRuntime
+  Call ClosePreviousVersion
+  !insertmacro CheckClosed "install_"
   !include "${INSTALL_FILES}"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteRegStr HKCU "${INSTALLER_KEY}" "InstallDir" "$INSTDIR"
