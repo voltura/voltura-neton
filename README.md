@@ -1,37 +1,44 @@
 # Voltura NetOn
 
-A Windows desktop app for turning a selected physical network adapter on and off. A modern .NET 10 port of [NetOn in VolturaTools](https://github.com/voltura/VolturaTools/tree/master/NetOn).
+The .NET 10 port of [NetOn by Voltura AB](https://github.com/voltura/VolturaTools/tree/master/NetOn), a Windows tray app for switching a network adapter on and off.
 
 ## Use
 
-Launch **Voltura.NetOn.exe** and accept the Windows administrator prompt. Choose your Ethernet or Wi-Fi adapter, then use **Turn internet OFF** or **Turn internet ON**. The app initially selects a connected adapter and remembers your selection.
+Run `publish\Voltura.NetOn.exe`. NetOn starts in the system tray, as the original did:
 
-The status describes the adapter's administrative state and link state. Other enabled adapters may still provide internet access; enabling an adapter does not guarantee internet connectivity. All operations run locally and work while offline.
+- **Green ON icon:** selected adapter enabled.
+- **Red OFF icon:** selected adapter disabled.
+- **Left-click:** toggle the selected adapter.
+- **Right-click:** adapter selection, settings, external IP, About, and **Exit NetOn**.
+- **Launch again:** reopen the existing instance's adapter window.
 
-Closing the window hides it to the system tray. Double-click its tray icon to reopen it, or use its context menu to toggle the selected adapter. Use **Exit** to close the application. Exiting does not change adapter state, so turn the adapter back on before exiting if you want it enabled.
+The connected adapter is selected initially. Use **Network adapter…** in the tray menu to change it. The adapter is remembered by GUID, so renaming it does not break the selection. An unavailable saved adapter is not silently replaced by a different one; choose an available adapter in the window.
 
-## Build and run
+The original speech announcements, mute setting, customizable icon colors, reset colors, start-with-Windows setting, external-IP tooltip/copying, About, and tray toggle are included. The default ON background is green as requested, with red for OFF. Color settings are available for both states.
 
-Requires Windows 10/11, Windows PowerShell with the NetAdapter module, and the .NET 10 SDK.
+The app opens and reads status without administrator privileges. Changing adapter state asks Windows for administrator permission through a short-lived helper. Canceling that prompt leaves the adapter unchanged. You can also run NetOn as administrator to avoid a prompt for each toggle.
+
+ON/OFF describes the selected adapter's administrative state. A disconnected but enabled adapter is ON. Other enabled adapters may still provide internet access. Enabling an adapter does not guarantee internet connectivity.
+
+Closing the adapter window hides it to the tray. **Exit NetOn** always closes the app, including during a refresh or a pending operation. An adapter command already submitted to Windows may finish after Exit. Exiting never automatically turns an adapter back on.
+
+## Build
+
+Requires Windows 10/11 and the .NET 10 SDK. Windows PowerShell's NetAdapter module is used only for changes; native Windows IP Helper APIs provide status without PowerShell or JSON parsing.
 
 ```powershell
 dotnet build -c Release
-Start-Process .\bin\Release\net10.0-windows\Voltura.NetOn.exe -Verb RunAs
+dotnet publish -c Release -r win-x64 --self-contained true -o publish
 ```
 
-Create a self-contained Windows x64 distribution (no separate .NET installation required):
+The self-contained `publish` folder includes the runtime. Keep its files together. User preferences are stored in `%LOCALAPPDATA%\Voltura\NetOn\preferences.json`; the startup option uses the current user's Windows Run key.
+
+External IP lookup uses `https://api.ipify.org` over HTTPS with a four-second timeout. Failure or lack of internet does not block adapter controls or Exit. Toggling and discovery work offline.
+
+## Verification
 
 ```powershell
-dotnet publish -c Release -r win-x64 --self-contained true -o artifacts\win-x64
+dotnet run --project verification\NetOn.Verification.csproj -c Release
 ```
 
-## Modernization
-
-- .NET 10 Windows Forms, nullable types, and DPI-aware layout.
-- Discover physical adapters instead of hard-coding `Ethernet`.
-- Identify adapters by GUID, so names are not inserted into commands.
-- Explicit administrator elevation, asynchronous operations, timeouts, error reporting, and state verification after changes.
-- Visible controls, tray access, remembered selection, and periodic status refresh.
-- No external IP lookup, third-party packages, or telemetry.
-
-The original speech and color-customization features are not included in this version.
+Checks native discovery against live adapters and exercises controller behavior with simulated adapter changes: selection during slow refresh, failure/recovery, ON/OFF controls and icon colors, Exit while work is pending, duplicate-instance activation, and restart after an abandoned instance. It shows no windows and changes no real network adapters. A real OFF/ON cycle and physical tray appearance remain manual acceptance checks.

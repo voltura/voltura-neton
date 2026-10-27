@@ -8,7 +8,13 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>Voltura.NetOn</AssemblyName>
     <Product>Voltura NetOn</Product>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <Company>Voltura</Company>
+    <ApplicationIcon>appicon.ico</ApplicationIcon>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="verification/**/*.cs" />
+    <Compile Remove="publish/**/*.cs" />
+    <InternalsVisibleTo Include="NetOn.Verification" />
+  </ItemGroup>
 </Project>

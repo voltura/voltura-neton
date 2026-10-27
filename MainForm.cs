@@ -1,42 +1,53 @@
-using System.Text.Json;
-
 namespace Voltura.NetOn;
 
 internal sealed class MainForm : Form
 {
-    private readonly ComboBox adapters = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, AccessibleName = "Network adapter" };
-    private readonly Label status = new() { AutoSize = true, Text = "Reading adapters…", Font = new Font("Segoe UI", 20, FontStyle.Bold), Margin = new Padding(0, 20, 0, 8) };
-    private readonly Label detail = new() { AutoSize = true, MaximumSize = new Size(490, 0), Margin = new Padding(0, 0, 0, 16) };
-    private readonly Button turnOn = new() { Text = "Turn internet ON", AutoSize = true, Padding = new Padding(14, 8, 14, 8), Enabled = false };
-    private readonly Button turnOff = new() { Text = "Turn internet OFF", AutoSize = true, Padding = new Padding(14, 8, 14, 8), Enabled = false };
+    private readonly IAdapterService service;
+    private readonly AppSettings preferences;
+    private readonly bool desktopFeatures;
+    private readonly CancellationTokenSource lifetime = new();
+    private readonly Speech speech = new();
+    private readonly ComboBox adapters = new() { Name = "AdapterSelector", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Top, AccessibleName = "Network adapter" };
+    private readonly Label status = new() { AutoSize = true, Text = "Reading adapters…", Font = new Font("Segoe UI", 20, FontStyle.Bold), Margin = new Padding(0, 18, 0, 8) };
+    private readonly Label detail = new() { AutoSize = true, MaximumSize = new Size(490, 0), Margin = new Padding(0, 0, 0, 12) };
+    private readonly Label error = new() { Name = "ErrorMessage", AutoSize = true, MaximumSize = new Size(490, 0), ForeColor = Color.Firebrick };
+    private readonly Button turnOn = new() { Name = "TurnOn", Text = "Turn internet ON", AutoSize = true, Padding = new Padding(10, 6, 10, 6) };
+    private readonly Button turnOff = new() { Name = "TurnOff", Text = "Turn internet OFF", AutoSize = true, Padding = new Padding(10, 6, 10, 6) };
     private readonly Button refresh = new() { Text = "Refresh", AutoSize = true };
     private readonly NotifyIcon tray;
     private readonly ToolStripMenuItem trayToggle = new("Toggle selected adapter");
-    private readonly System.Windows.Forms.Timer timer = new() { Interval = 5000 };
-    private readonly string settingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Voltura", "NetOn", "settings.json");
-    private Guid? selectedId;
-    private bool busy;
-    private bool exiting;
-    private bool rebinding;
+    private readonly ToolStripMenuItem copyIp = new("Copy external IP");
+    private readonly System.Windows.Forms.Timer timer = new() { Interval = 2000 };
+    private readonly Icon onIcon, offIcon, unknownIcon;
+    private Icon? customOn, customOff;
+    private bool refreshing, changing, exiting, rebinding, showRequested, hasSnapshot;
+    private bool? announcedState;
+    private Guid? announcedAdapter;
+    private string externalIp = "";
     private Adapter? Selected => adapters.SelectedItem as Adapter;
 
-    public MainForm()
+    public MainForm(IAdapterService? service = null, AppSettings? settings = null, bool desktopFeatures = true)
     {
+        this.service = service ?? new NetworkAdapters();
+        preferences = settings ?? AppSettings.Load();
+        this.desktopFeatures = desktopFeatures;
+        onIcon = StatusIcons.Create(true, preferences);
+        offIcon = StatusIcons.Create(false, preferences);
+        unknownIcon = StatusIcons.Create(null, preferences);
         SuspendLayout();
         Text = "Voltura NetOn";
-        Icon = SystemIcons.Application;
-        StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Segoe UI", 10);
         AutoScaleDimensions = new SizeF(96, 96);
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(560, 390);
-        MinimumSize = new Size(580, 430);
+        ClientSize = new Size(570, 430);
+        MinimumSize = new Size(590, 470);
         AutoSize = true;
-        AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        AutoSizeMode = AutoSizeMode.GrowOnly;
+        StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(246, 248, 251);
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(28), ColumnCount = 1, RowCount = 7 };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(24), ColumnCount = 1, RowCount = 8 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int row = 0; row < 7; row++) layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        for (int row = 0; row < 8; row++) layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.Controls.Add(new Label { Text = "NETWORK ADAPTER", AutoSize = true, ForeColor = Color.DimGray });
         layout.Controls.Add(adapters);
         layout.Controls.Add(status);
@@ -44,21 +55,55 @@ internal sealed class MainForm : Form
         var buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
         buttons.Controls.AddRange([turnOn, turnOff]);
         layout.Controls.Add(buttons);
-        layout.Controls.Add(new Label { Text = "Switches the selected adapter. Other active adapters can still provide internet access. Turning it on does not guarantee an internet connection.", AutoSize = true, MaximumSize = new Size(490, 0), ForeColor = Color.DimGray, Margin = new Padding(0, 16, 0, 12) });
+        layout.Controls.Add(new Label { Text = "Left-click the tray icon to switch this adapter. Right-click for settings and Exit. Other enabled adapters may still provide internet access.", AutoSize = true, MaximumSize = new Size(490, 0), ForeColor = Color.DimGray, Margin = new Padding(0, 16, 0, 12) });
+        layout.Controls.Add(error);
         var footer = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
         var hide = new Button { Text = "Hide to tray", AutoSize = true };
-        var exit = new Button { Text = "Exit", AutoSize = true };
+        var exit = new Button { Name = "Exit", Text = "Exit NetOn", AutoSize = true };
         footer.Controls.AddRange([refresh, hide, exit]);
         layout.Controls.Add(footer);
         Controls.Add(layout);
+
         var menu = new ContextMenuStrip();
-        menu.Items.Add("Open NetOn", null, (_, _) => ShowWindow());
+        menu.Items.Add("About NetOn", null, (_, _) =>
+        {
+            Say("NetOn by Voltura AB");
+            MessageBox.Show(this, "NetOn by Voltura AB\nVersion 1.0.1 • .NET 10\nhttps://github.com/voltura/voltura-neton\n\nFree for all.", "About NetOn", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        });
+        menu.Items.Add("Network adapter…", null, (_, _) => ShowWindow());
         menu.Items.Add(trayToggle);
+        var settingsMenu = new ToolStripMenuItem("Settings");
+        var startup = new ToolStripMenuItem("Start with Windows") { Checked = desktopFeatures && AppSettings.StartWithWindows };
+        startup.Click += (_, _) =>
+        {
+            try { AppSettings.StartWithWindows = !startup.Checked; startup.Checked = AppSettings.StartWithWindows; Say(startup.Checked ? "NetOn set to start with Windows" : "NetOn will not start with Windows"); }
+            catch (Exception ex) { Report(ex); }
+        };
+        settingsMenu.DropDownItems.Add(startup);
+        var colors = new ToolStripMenuItem("Icon colors");
+        colors.DropDownItems.Add("ON foreground", null, (_, _) => ChooseColor(true, true));
+        colors.DropDownItems.Add("ON background", null, (_, _) => ChooseColor(true, false));
+        colors.DropDownItems.Add("OFF foreground", null, (_, _) => ChooseColor(false, true));
+        colors.DropDownItems.Add("OFF background", null, (_, _) => ChooseColor(false, false));
+        colors.DropDownItems.Add("Reset colors", null, (_, _) =>
+        {
+            var defaults = new AppSettings();
+            preferences.OnBackground = defaults.OnBackground; preferences.OnForeground = defaults.OnForeground;
+            preferences.OffBackground = defaults.OffBackground; preferences.OffForeground = defaults.OffForeground;
+            SavePreferences(); RebuildIcons(); Say("Colors reset");
+        });
+        settingsMenu.DropDownItems.Add(colors);
+        var mute = new ToolStripMenuItem("Mute all sounds") { Checked = preferences.MuteAllSounds };
+        mute.Click += (_, _) => { preferences.MuteAllSounds = !preferences.MuteAllSounds; mute.Checked = preferences.MuteAllSounds; SavePreferences(); };
+        settingsMenu.DropDownItems.Add(mute);
+        menu.Items.Add(settingsMenu);
+        menu.Items.Add(copyIp);
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Exit", null, (_, _) => ExitApp());
-        tray = new NotifyIcon { Icon = SystemIcons.Application, Text = "Voltura NetOn", ContextMenuStrip = menu, Visible = true };
-        tray.DoubleClick += (_, _) => ShowWindow();
-        trayToggle.Click += async (_, _) => { if (Selected is { } adapter) await ChangeAsync(!adapter.Enabled); };
+        menu.Items.Add("Exit NetOn", null, (_, _) => ExitApp());
+        tray = new NotifyIcon { Icon = unknownIcon, Text = "NetOn — reading adapters", ContextMenuStrip = menu, Visible = desktopFeatures };
+        tray.MouseClick += async (_, e) => { if (e.Button == MouseButtons.Left) await ToggleAsync(); };
+        trayToggle.Click += async (_, _) => await ToggleAsync();
+        copyIp.Click += async (_, _) => await CopyExternalIpAsync();
         turnOn.Click += async (_, _) => await ChangeAsync(true);
         turnOff.Click += async (_, _) => await ChangeAsync(false);
         refresh.Click += async (_, _) => await RefreshAsync();
@@ -67,106 +112,211 @@ internal sealed class MainForm : Form
         adapters.SelectedIndexChanged += (_, _) =>
         {
             if (rebinding) return;
-            selectedId = Selected?.Id;
-            SaveSelection();
+            preferences.AdapterId = Selected?.Id;
+            SavePreferences();
+            error.Text = "";
             Render();
         };
         timer.Tick += async (_, _) => await RefreshAsync();
-        Shown += async (_, _) => { await RefreshAsync(); timer.Start(); };
-        FormClosing += (_, e) => { if (!exiting && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); } };
-        try { if (File.Exists(settingsPath)) selectedId = JsonSerializer.Deserialize<Guid?>(File.ReadAllText(settingsPath)); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { /* Use the active adapter if settings are unavailable. */ }
+        FormClosing += (_, e) =>
+        {
+            if (!exiting && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); }
+        };
+        Render();
         ResumeLayout(true);
     }
 
-    private void SaveSelection()
+    // A faithful tray startup; the optional adapter window opens from the menu or a second launch.
+    protected override void SetVisibleCore(bool value) => base.SetVisibleCore(value && showRequested);
+
+    internal void Start()
     {
-        try { Directory.CreateDirectory(Path.GetDirectoryName(settingsPath)!); File.WriteAllText(settingsPath, JsonSerializer.Serialize(selectedId)); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { detail.Text = "The adapter selection could not be saved: " + ex.Message; }
+        _ = RefreshAsync();
+        timer.Start();
+        if (desktopFeatures) _ = ReadExternalIpAsync();
     }
 
-    private async Task RefreshAsync()
+    public void RequestShow()
     {
-        if (busy || exiting || adapters.DroppedDown) return;
-        busy = true;
-        Render();
-        bool loaded = false;
-        try { await LoadAdaptersAsync(); loaded = true; }
-        catch (Exception ex)
-        {
-            if (!IsDisposed)
-            {
-                rebinding = true;
-                try { adapters.DataSource = null; } finally { rebinding = false; }
-                status.Text = "Status unavailable";
-                detail.Text = ex.Message;
-                tray.Text = "Voltura NetOn — status unavailable";
-            }
-        }
-        finally { busy = false; if (!IsDisposed) { adapters.Enabled = refresh.Enabled = true; if (loaded) Render(); } }
-    }
-
-    private async Task LoadAdaptersAsync()
-    {
-        var found = await NetworkAdapters.ReadAsync();
         if (exiting || IsDisposed) return;
-        Guid? desired = selectedId ?? found.FirstOrDefault(a => a.Status == "Up")?.Id ?? found.FirstOrDefault()?.Id;
-        rebinding = true;
-        try { adapters.DataSource = found; adapters.SelectedItem = found.FirstOrDefault(a => a.Id == desired); }
-        finally { rebinding = false; }
-        selectedId = desired;
+        try { BeginInvoke(() => { if (!exiting) ShowWindow(); }); }
+        catch (InvalidOperationException) { }
     }
 
-    private async Task ChangeAsync(bool enable)
+    private void ShowWindow() { showRequested = true; Show(); WindowState = FormWindowState.Normal; Activate(); }
+
+    internal async Task RefreshAsync()
     {
-        if (busy || Selected is not { } adapter) return;
-        busy = true;
-        Render();
-        status.Text = enable ? "Turning on…" : "Turning off…";
+        if (refreshing || changing || exiting || adapters.DroppedDown) return;
+        refreshing = true;
         try
         {
-            await NetworkAdapters.SetEnabledAsync(adapter.Id, enable);
-            await LoadAdaptersAsync();
-            if (Selected is not { } actual || actual.Enabled != enable)
-                throw new InvalidOperationException("Windows has not confirmed the requested adapter state. Refresh and try again.");
+            var found = await service.ReadAsync(lifetime.Token);
+            if (exiting || IsDisposed) return;
+            // The user can select an adapter while a background read is in progress.
+            if (!adapters.DroppedDown) ApplySnapshot(found);
+            error.Text = "";
+            Render();
         }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch (Exception ex) { if (!exiting) { hasSnapshot = false; Report(ex); Render(); } }
+        finally { refreshing = false; }
+    }
+
+    private void ApplySnapshot(List<Adapter> found)
+    {
+        Guid? desired = Selected?.Id ?? preferences.AdapterId;
+        if (desired is null) desired = found.FirstOrDefault(a => a.Status == "Connected")?.Id ?? found.FirstOrDefault()?.Id;
+        // Don't rebuild the dropdown every timer tick; that steals focus and closes it.
+        bool changed = !adapters.Items.Cast<Adapter>().SequenceEqual(found);
+        if (changed)
+        {
+            rebinding = true;
+            adapters.BeginUpdate();
+            try
+            {
+                adapters.Items.Clear();
+                adapters.Items.AddRange(found.Cast<object>().ToArray());
+                adapters.SelectedItem = found.FirstOrDefault(a => a.Id == desired);
+            }
+            finally { adapters.EndUpdate(); rebinding = false; }
+        }
+        if (preferences.AdapterId is null && Selected is { } selected) { preferences.AdapterId = selected.Id; SavePreferences(); }
+        hasSnapshot = true;
+    }
+
+    private async Task ToggleAsync()
+    {
+        if (Selected is not { } selected || !hasSnapshot) { ShowWindow(); return; }
+        await ChangeAsync(!selected.Enabled);
+    }
+
+    internal async Task ChangeAsync(bool enable)
+    {
+        if (changing || exiting || !hasSnapshot || Selected is not { } selected) return;
+        changing = true;
+        Render();
+        status.Text = enable ? "Turning on…" : "Turning off…";
+        error.Text = "";
+        try
+        {
+            await service.SetEnabledAsync(selected.Id, enable, lifetime.Token);
+            var found = await service.ReadAsync(lifetime.Token);
+            if (exiting) return;
+            ApplySnapshot(found);
+            if (Selected is not { } actual || actual.Enabled != enable) throw new InvalidOperationException("Windows has not confirmed the requested state. Refresh the status before trying again.");
+        }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "Could not change adapter", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            try { await LoadAdaptersAsync(); } catch { adapters.DataSource = null; }
+            if (!exiting)
+            {
+                Report(ex);
+                try { ApplySnapshot(await service.ReadAsync(lifetime.Token)); }
+                catch { hasSnapshot = false; }
+            }
         }
-        finally { busy = false; if (!IsDisposed) Render(); }
+        finally { changing = false; if (!exiting && !IsDisposed) Render(); }
     }
 
     private void Render()
     {
-        adapters.Enabled = refresh.Enabled = !busy;
-        turnOn.Enabled = !busy && Selected is { Enabled: false };
-        turnOff.Enabled = !busy && Selected is { Enabled: true };
-        trayToggle.Enabled = !busy && Selected != null;
-        if (busy) return;
-        if (Selected is not { } adapter)
+        adapters.Enabled = !changing;
+        refresh.Enabled = !changing;
+        turnOn.Enabled = !changing && hasSnapshot && Selected is { Enabled: false };
+        turnOff.Enabled = !changing && hasSnapshot && Selected is { Enabled: true };
+        trayToggle.Enabled = !changing && hasSnapshot && Selected is not null;
+        if (changing) return;
+        bool? enabled = hasSnapshot ? Selected?.Enabled : null;
+        Icon icon = enabled switch { true => customOn ?? onIcon, false => customOff ?? offIcon, null => unknownIcon };
+        tray.Icon = Icon = icon;
+        if (Selected is not { } adapter || !hasSnapshot)
         {
-            status.Text = "No adapter selected";
-            detail.Text = adapters.Items.Count == 0 ? "No physical network adapters were found. Connect an adapter and refresh." : "Select an available adapter above.";
-            tray.Text = "Voltura NetOn — no adapter selected";
+            status.Text = hasSnapshot ? "Select an adapter" : "Status unavailable";
+            status.ForeColor = Color.DimGray;
+            detail.Text = hasSnapshot ? "Choose an adapter above. If none are listed, connect one and refresh." : "Refresh to read the adapter status.";
+            tray.Text = "NetOn — status unavailable";
             return;
         }
-        status.Text = adapter.Enabled ? "Adapter ON" : "Adapter OFF";
-        status.ForeColor = adapter.Enabled ? Color.FromArgb(22, 125, 77) : Color.FromArgb(154, 57, 45);
+        status.Text = adapter.Enabled ? "Network ON" : "Network OFF";
+        status.ForeColor = adapter.Enabled ? Color.Green : Color.Firebrick;
         detail.Text = $"{adapter.Description}\nConnection: {adapter.Status}";
         trayToggle.Text = $"Turn {adapter.Name} {(adapter.Enabled ? "OFF" : "ON")}";
-        string tooltip = $"NetOn: {adapter.Name} — {(adapter.Enabled ? "ON" : "OFF")}";
-        tray.Text = tooltip.Length > 63 ? tooltip[..63] : tooltip;
-        tray.Icon = adapter.Enabled ? SystemIcons.Information : SystemIcons.Warning;
+        string tip = $"NetOn: {adapter.Name} {(adapter.Enabled ? "ON" : "OFF")}";
+        if (adapter.Enabled && externalIp.Length > 0) tip += "\n" + externalIp;
+        tray.Text = tip.Length > 63 ? tip[..63] : tip;
+        if (announcedAdapter != adapter.Id || announcedState != adapter.Enabled)
+        {
+            Say(adapter.Enabled ? "Network enabled" : "Network disabled");
+            announcedAdapter = adapter.Id; announcedState = adapter.Enabled;
+        }
     }
 
-    private void ShowWindow() { Show(); WindowState = FormWindowState.Normal; Activate(); }
-    private void ExitApp() { if (busy) return; exiting = true; Close(); }
+    private void Say(string text) { if (desktopFeatures && !preferences.MuteAllSounds && !exiting) speech.Say(text); }
+    private void Report(Exception ex) { if (exiting || IsDisposed) return; error.Text = ex.Message; }
+    private void SavePreferences() { if (!desktopFeatures) return; try { preferences.Save(); } catch (Exception ex) { Report(ex); } }
+
+    private void ChooseColor(bool enabled, bool foreground)
+    {
+        Say(foreground ? "Please select foreground color" : "Please select background color");
+        int argb = enabled ? (foreground ? preferences.OnForeground : preferences.OnBackground) : (foreground ? preferences.OffForeground : preferences.OffBackground);
+        using var dialog = new ColorDialog { Color = Color.FromArgb(argb), FullOpen = false, SolidColorOnly = true };
+        if (dialog.ShowDialog() != DialogResult.OK) return;
+        if (enabled) { if (foreground) preferences.OnForeground = dialog.Color.ToArgb(); else preferences.OnBackground = dialog.Color.ToArgb(); }
+        else { if (foreground) preferences.OffForeground = dialog.Color.ToArgb(); else preferences.OffBackground = dialog.Color.ToArgb(); }
+        SavePreferences(); RebuildIcons();
+    }
+
+    private void RebuildIcons()
+    {
+        Icon? previousOn = customOn, previousOff = customOff;
+        customOn = StatusIcons.Create(true, preferences); customOff = StatusIcons.Create(false, preferences);
+        Render(); previousOn?.Dispose(); previousOff?.Dispose();
+    }
+
+    private async Task ReadExternalIpAsync()
+    {
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(4) };
+            string value = (await client.GetStringAsync("https://api.ipify.org", lifetime.Token)).Trim();
+            if (System.Net.IPAddress.TryParse(value, out _) && !exiting) { externalIp = value; Render(); }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException) { /* The app must also work offline. */ }
+    }
+
+    private async Task CopyExternalIpAsync()
+    {
+        copyIp.Enabled = false;
+        try
+        {
+            await ReadExternalIpAsync();
+            if (exiting) return;
+            if (externalIp.Length == 0) error.Text = "External IP is unavailable while offline.";
+            else Clipboard.SetText(externalIp);
+        }
+        catch (Exception ex) { Report(ex); }
+        finally { if (!exiting) copyIp.Enabled = true; }
+    }
+
+    internal void ExitApp()
+    {
+        if (exiting) return;
+        exiting = true;
+        timer.Stop();
+        lifetime.Cancel();
+        tray.Visible = false;
+        Close();
+    }
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { exiting = true; timer.Dispose(); tray.Visible = false; tray.ContextMenuStrip?.Dispose(); tray.Dispose(); }
+        if (disposing)
+        {
+            exiting = true; lifetime.Cancel(); timer.Dispose();
+            tray.Visible = false; tray.ContextMenuStrip?.Dispose(); tray.Dispose();
+            speech.Dispose(); onIcon.Dispose(); offIcon.Dispose(); unknownIcon.Dispose(); customOn?.Dispose(); customOff?.Dispose();
+        }
         base.Dispose(disposing);
     }
 }
