@@ -3,7 +3,6 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text;
-using System.Text.Json;
 
 namespace Voltura.NetOn;
 
@@ -16,7 +15,7 @@ internal sealed record Adapter(string Name, Guid Id, string Description, string 
 internal interface IAdapterService
 {
     Task<List<Adapter>> ReadAsync(CancellationToken cancellationToken);
-    Task SetEnabledAsync(Guid id, bool enabled, CancellationToken cancellationToken);
+    Task SetEnabledAsync(IReadOnlyCollection<Guid> ids, bool enabled, CancellationToken cancellationToken);
 }
 
 internal sealed class NetworkAdapters : IAdapterService
@@ -59,7 +58,8 @@ internal sealed class NetworkAdapters : IAdapterService
                 var row = Marshal.PtrToStructure<InterfaceRow>(IntPtr.Add(table, 8 + i * 1352));
                 bool hardware = (row.Flags & 1) != 0;
                 bool filter = (row.Flags & 2) != 0;
-                if (!hardware || filter || row.OperationalStatus == 6 || row.Type is not (6 or 71)) continue;
+                // Include Bluetooth PAN, virtual Ethernet, and mobile broadband as well as wired/Wi-Fi.
+                if (filter || row.OperationalStatus == 6 || row.Type is 24 or 131 || (!hardware && row.Type is not (6 or 71 or 237 or 243 or 244))) continue;
                 string state = row.AdminStatus != 1 ? "Disabled" : row.OperationalStatus == 1 ? "Connected" : "Disconnected";
                 result.Add(new Adapter(row.Alias, row.Id, row.Description, state, (int)row.AdminStatus));
             }
@@ -68,34 +68,29 @@ internal sealed class NetworkAdapters : IAdapterService
         finally { FreeMibTable(table); }
     }
 
-    public async Task SetEnabledAsync(Guid id, bool enabled, CancellationToken cancellationToken)
+    public async Task SetEnabledAsync(IReadOnlyCollection<Guid> ids, bool enabled, CancellationToken cancellationToken)
     {
-        if (IsAdministrator()) { await SetAsAdministratorAsync(id, enabled, cancellationToken); return; }
-        Guid operation = Guid.NewGuid();
-        string resultPath = OperationPath(operation);
-        var start = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = true, Verb = "runas" };
-        foreach (string arg in new[] { "--set-adapter", id.ToString("D"), enabled ? "on" : "off", operation.ToString("D") }) start.ArgumentList.Add(arg);
-        try
-        {
-            using var helper = Process.Start(start) ?? throw new InvalidOperationException("Could not start the administrator helper.");
-            await helper.WaitForExitAsync(cancellationToken);
-            if (helper.ExitCode != 0)
-            {
-                string message = File.Exists(resultPath) ? JsonSerializer.Deserialize<string>(await File.ReadAllTextAsync(resultPath, cancellationToken)) ?? "Windows could not change the adapter." : "Windows could not change the adapter.";
-                throw new InvalidOperationException(message);
-            }
-        }
-        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223) { throw new InvalidOperationException("The administrator request was canceled. The adapter was not changed."); }
-        finally { try { if (File.Exists(resultPath)) File.Delete(resultPath); } catch (IOException) { } }
+        if (ids.Count == 0) return;
+        if (!IsAdministrator()) throw new InvalidOperationException("Restart NetOn and accept the administrator prompt before switching internet access.");
+        await SetAsAdministratorAsync(ids, enabled, cancellationToken);
     }
 
-    internal static string OperationPath(Guid operation) => Path.Combine(AppSettings.DirectoryPath, "operations", operation.ToString("D") + ".json");
     internal static bool IsAdministrator() => new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
 
-    internal static async Task SetAsAdministratorAsync(Guid id, bool enabled, CancellationToken cancellationToken)
+    internal static string BuildCommand(IReadOnlyCollection<Guid> ids, bool enabled)
     {
-        // A GUID is the only value inserted in the PowerShell command.
-        string script = $"$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $a=@(Get-NetAdapter -Physical -IncludeHidden -ErrorAction Stop | Where-Object {{ [guid]$_.InterfaceGuid -eq [guid]'{id:D}' }}); if($a.Count -ne 1){{ throw 'The selected adapter is no longer available.' }}; $a | {(enabled ? "Enable" : "Disable")}-NetAdapter -Confirm:$false -ErrorAction Stop";
+        // Only GUIDs enter the script. Attempt every adapter even if one fails.
+        string values = string.Join(",", ids.Distinct().Select(id => $"'{id:D}'"));
+        return "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); " +
+            $"$ids=@({values}); $all=@(Get-NetAdapter -IncludeHidden -ErrorAction Stop); $failures=[Collections.Generic.List[string]]::new(); " +
+            "foreach($id in $ids){ try { $a=@($all | Where-Object { [guid]$_.InterfaceGuid -eq [guid]$id }); if($a.Count -ne 1){ throw ('Adapter is unavailable: '+$id) }; " +
+            $"$a | {(enabled ? "Enable" : "Disable")}-NetAdapter -Confirm:$false -ErrorAction Stop " +
+            "} catch { $failures.Add($_.Exception.Message) } }; if($failures.Count -gt 0){ throw ($failures -join [Environment]::NewLine) }";
+    }
+
+    internal static async Task SetAsAdministratorAsync(IReadOnlyCollection<Guid> ids, bool enabled, CancellationToken cancellationToken)
+    {
+        string script = BuildCommand(ids, enabled);
         var start = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"))
         {
             UseShellExecute = false, CreateNoWindow = true,
@@ -107,7 +102,7 @@ internal sealed class NetworkAdapters : IAdapterService
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        timeout.CancelAfter(TimeSpan.FromSeconds(60));
         try { await process.WaitForExitAsync(timeout.Token); }
         catch (OperationCanceledException)
         {
@@ -121,7 +116,8 @@ internal sealed class NetworkAdapters : IAdapterService
         if (process.ExitCode != 0) throw new InvalidOperationException(string.IsNullOrWhiteSpace(failure) ? "Windows could not change the adapter." : failure.Trim());
         for (int attempt = 0; attempt < 10; attempt++)
         {
-            if (Read().FirstOrDefault(a => a.Id == id) is { } actual && actual.Enabled == enabled) return;
+            var current = Read();
+            if (ids.All(id => current.FirstOrDefault(a => a.Id == id) is { } actual && actual.Enabled == enabled)) return;
             await Task.Delay(300, cancellationToken);
         }
         throw new InvalidOperationException("Windows has not confirmed the requested state. Refresh the adapter status.");

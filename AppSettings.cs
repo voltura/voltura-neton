@@ -6,6 +6,8 @@ namespace Voltura.NetOn;
 internal sealed class AppSettings
 {
     public Guid? AdapterId { get; set; }
+    public List<Guid> RestoreAdapterIds { get; set; } = [];
+    public bool OffRequested { get; set; }
     public bool MuteAllSounds { get; set; }
     public int OnBackground { get; set; } = Color.Green.ToArgb();
     public int OnForeground { get; set; } = Color.White.ToArgb();

@@ -4,6 +4,8 @@ internal sealed class MainForm : Form
 {
     private readonly IAdapterService service;
     private readonly AppSettings preferences;
+    private readonly InternetSwitch internetSwitch;
+    private List<Adapter> snapshot = [];
     private readonly bool desktopFeatures;
     private readonly CancellationTokenSource lifetime = new();
     private readonly Speech speech = new();
@@ -15,14 +17,13 @@ internal sealed class MainForm : Form
     private readonly Button turnOff = new() { Name = "TurnOff", Text = "Turn internet OFF", AutoSize = true, Padding = new Padding(10, 6, 10, 6) };
     private readonly Button refresh = new() { Text = "Refresh", AutoSize = true };
     private readonly NotifyIcon tray;
-    private readonly ToolStripMenuItem trayToggle = new("Toggle selected adapter");
+    private readonly ToolStripMenuItem trayToggle = new("Toggle internet access");
     private readonly ToolStripMenuItem copyIp = new("Copy external IP");
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 2000 };
     private readonly Icon onIcon, offIcon, unknownIcon;
     private Icon? customOn, customOff;
     private bool refreshing, changing, exiting, rebinding, showRequested, hasSnapshot;
     private bool? announcedState;
-    private Guid? announcedAdapter;
     private string externalIp = "";
     private Adapter? Selected => adapters.SelectedItem as Adapter;
 
@@ -31,6 +32,7 @@ internal sealed class MainForm : Form
         this.service = service ?? new NetworkAdapters();
         preferences = settings ?? AppSettings.Load();
         this.desktopFeatures = desktopFeatures;
+        internetSwitch = new InternetSwitch(this.service, preferences, () => { if (desktopFeatures) preferences.Save(); });
         onIcon = StatusIcons.Create(true, preferences);
         offIcon = StatusIcons.Create(false, preferences);
         unknownIcon = StatusIcons.Create(null, preferences);
@@ -48,14 +50,14 @@ internal sealed class MainForm : Form
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(24), ColumnCount = 1, RowCount = 8 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         for (int row = 0; row < 8; row++) layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.Controls.Add(new Label { Text = "NETWORK ADAPTER", AutoSize = true, ForeColor = Color.DimGray });
+        layout.Controls.Add(new Label { Text = "ADAPTER DETAILS — ON / OFF CONTROLS ALL ADAPTERS", AutoSize = true, ForeColor = Color.DimGray });
         layout.Controls.Add(adapters);
         layout.Controls.Add(status);
         layout.Controls.Add(detail);
         var buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
         buttons.Controls.AddRange([turnOn, turnOff]);
         layout.Controls.Add(buttons);
-        layout.Controls.Add(new Label { Text = "Left-click the tray icon to switch this adapter. Right-click for settings and Exit. Other enabled adapters may still provide internet access.", AutoSize = true, MaximumSize = new Size(490, 0), ForeColor = Color.DimGray, Margin = new Padding(0, 16, 0, 12) });
+        layout.Controls.Add(new Label { Text = "OFF disables all network adapters, including Ethernet, Wi-Fi and Bluetooth. ON restores the adapters enabled before OFF. Left-click the tray icon to toggle internet access.", AutoSize = true, MaximumSize = new Size(490, 0), ForeColor = Color.DimGray, Margin = new Padding(0, 16, 0, 12) });
         layout.Controls.Add(error);
         var footer = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
         var hide = new Button { Text = "Hide to tray", AutoSize = true };
@@ -68,9 +70,9 @@ internal sealed class MainForm : Form
         menu.Items.Add("About NetOn", null, (_, _) =>
         {
             Say("NetOn by Voltura AB");
-            MessageBox.Show(this, "NetOn by Voltura AB\nVersion 1.0.1 • .NET 10\nhttps://github.com/voltura/voltura-neton\n\nFree for all.", "About NetOn", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, "NetOn by Voltura AB\nVersion 1.0.2 • .NET 10\nhttps://github.com/voltura/voltura-neton\n\nFree for all.", "About NetOn", MessageBoxButtons.OK, MessageBoxIcon.Information);
         });
-        menu.Items.Add("Network adapter…", null, (_, _) => ShowWindow());
+        menu.Items.Add("Network adapters…", null, (_, _) => ShowWindow());
         menu.Items.Add(trayToggle);
         var settingsMenu = new ToolStripMenuItem("Settings");
         var startup = new ToolStripMenuItem("Start with Windows") { Checked = desktopFeatures && AppSettings.StartWithWindows };
@@ -152,7 +154,7 @@ internal sealed class MainForm : Form
         try
         {
             var found = await service.ReadAsync(lifetime.Token);
-            if (exiting || IsDisposed) return;
+            if (exiting || IsDisposed || changing) return;
             // The user can select an adapter while a background read is in progress.
             if (!adapters.DroppedDown) ApplySnapshot(found);
             error.Text = "";
@@ -165,6 +167,7 @@ internal sealed class MainForm : Form
 
     private void ApplySnapshot(List<Adapter> found)
     {
+        snapshot = found;
         Guid? desired = Selected?.Id ?? preferences.AdapterId;
         if (desired is null) desired = found.FirstOrDefault(a => a.Status == "Connected")?.Id ?? found.FirstOrDefault()?.Id;
         // Don't rebuild the dropdown every timer tick; that steals focus and closes it.
@@ -187,24 +190,24 @@ internal sealed class MainForm : Form
 
     private async Task ToggleAsync()
     {
-        if (Selected is not { } selected || !hasSnapshot) { ShowWindow(); return; }
-        await ChangeAsync(!selected.Enabled);
+        if (!hasSnapshot || snapshot.Count == 0) { ShowWindow(); return; }
+        await ChangeAsync(!snapshot.Any(a => a.Enabled));
     }
 
     internal async Task ChangeAsync(bool enable)
     {
-        if (changing || exiting || !hasSnapshot || Selected is not { } selected) return;
+        if (changing || exiting || !hasSnapshot || snapshot.Count == 0) return;
         changing = true;
         Render();
         status.Text = enable ? "Turning on…" : "Turning off…";
+        tray.Icon = Icon = unknownIcon;
+        tray.Text = enable ? "NetOn — turning internet ON" : "NetOn — turning internet OFF";
         error.Text = "";
         try
         {
-            await service.SetEnabledAsync(selected.Id, enable, lifetime.Token);
-            var found = await service.ReadAsync(lifetime.Token);
+            var found = await internetSwitch.SetEnabledAsync(enable, lifetime.Token);
             if (exiting) return;
             ApplySnapshot(found);
-            if (Selected is not { } actual || actual.Enabled != enable) throw new InvalidOperationException("Windows has not confirmed the requested state. Refresh the status before trying again.");
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch (Exception ex)
@@ -223,14 +226,16 @@ internal sealed class MainForm : Form
     {
         adapters.Enabled = !changing;
         refresh.Enabled = !changing;
-        turnOn.Enabled = !changing && hasSnapshot && Selected is { Enabled: false };
-        turnOff.Enabled = !changing && hasSnapshot && Selected is { Enabled: true };
-        trayToggle.Enabled = !changing && hasSnapshot && Selected is not null;
+        bool anyEnabled = snapshot.Any(a => a.Enabled);
+        bool known = hasSnapshot && snapshot.Count > 0;
+        turnOn.Enabled = !changing && known && (!anyEnabled || preferences.OffRequested);
+        turnOff.Enabled = !changing && known && anyEnabled;
+        trayToggle.Enabled = !changing && known;
         if (changing) return;
-        bool? enabled = hasSnapshot ? Selected?.Enabled : null;
+        bool? enabled = known ? anyEnabled : null;
         Icon icon = enabled switch { true => customOn ?? onIcon, false => customOff ?? offIcon, null => unknownIcon };
         tray.Icon = Icon = icon;
-        if (Selected is not { } adapter || !hasSnapshot)
+        if (!known)
         {
             status.Text = hasSnapshot ? "Select an adapter" : "Status unavailable";
             status.ForeColor = Color.DimGray;
@@ -238,17 +243,17 @@ internal sealed class MainForm : Form
             tray.Text = "NetOn — status unavailable";
             return;
         }
-        status.Text = adapter.Enabled ? "Network ON" : "Network OFF";
-        status.ForeColor = adapter.Enabled ? Color.Green : Color.Firebrick;
-        detail.Text = $"{adapter.Description}\nConnection: {adapter.Status}";
-        trayToggle.Text = $"Turn {adapter.Name} {(adapter.Enabled ? "OFF" : "ON")}";
-        string tip = $"NetOn: {adapter.Name} {(adapter.Enabled ? "ON" : "OFF")}";
-        if (adapter.Enabled && externalIp.Length > 0) tip += "\n" + externalIp;
+        status.Text = anyEnabled ? "Internet ON" : "Internet OFF";
+        status.ForeColor = anyEnabled ? Color.Green : Color.Firebrick;
+        detail.Text = Selected is { } adapter ? $"{adapter.Description}\n{adapter.Name}: {adapter.Status}\nEnabled adapters: {snapshot.Count(a => a.Enabled)} of {snapshot.Count}" : $"Enabled adapters: {snapshot.Count(a => a.Enabled)} of {snapshot.Count}";
+        trayToggle.Text = $"Turn internet {(anyEnabled ? "OFF" : "ON")}";
+        string tip = $"NetOn: Internet {(anyEnabled ? "ON" : "OFF")}";
+        if (anyEnabled && externalIp.Length > 0) tip += "\n" + externalIp;
         tray.Text = tip.Length > 63 ? tip[..63] : tip;
-        if (announcedAdapter != adapter.Id || announcedState != adapter.Enabled)
+        if (announcedState != anyEnabled)
         {
-            Say(adapter.Enabled ? "Network enabled" : "Network disabled");
-            announcedAdapter = adapter.Id; announcedState = adapter.Enabled;
+            Say(anyEnabled ? "Internet enabled" : "Internet disabled");
+            announcedState = anyEnabled;
         }
     }
 
