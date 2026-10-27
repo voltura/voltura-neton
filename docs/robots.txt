@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://voltura.github.io/voltura-neton/sitemap.xml

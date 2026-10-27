@@ -9,11 +9,25 @@ ${StrStr}
 !ifndef APP_VERSION
   !error "Build with scripts/build-release.ps1"
 !endif
+!ifndef UNINSTALL_KEY
+  !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Voltura.NetOn"
+!endif
+!ifndef INSTALLER_KEY
+  !define INSTALLER_KEY "Software\Voltura\NetOn\Installer"
+!endif
+!ifndef MENU_NAME
+  !define MENU_NAME "Voltura NetOn"
+!endif
 Name "Voltura NetOn"
 OutFile "${OUTPUT_FILE}"
 InstallDir "$LOCALAPPDATA\Programs\Voltura NetOn"
-InstallDirRegKey HKCU "Software\Voltura\NetOn\Installer" "InstallDir"
+InstallDirRegKey HKCU "${INSTALLER_KEY}" "InstallDir"
 RequestExecutionLevel user
+ManifestDPIAware true
+ManifestDPIAwareness PerMonitorV2,PerMonitor
+ManifestSupportedOS Win10
+SetFont "Segoe UI" 9
+BrandingText "Voltura AB"
 SetCompressor /SOLID lzma
 SetOverwrite on
 VIProductVersion "${APP_VERSION}.0"
@@ -24,12 +38,24 @@ VIAddVersionKey "FileDescription" "Voltura NetOn installer"
 VIAddVersionKey "FileVersion" "${APP_VERSION}.0"
 VIAddVersionKey "LegalCopyright" "Voltura AB"
 !define MUI_ICON "..\appicon.ico"
+!define MUI_UNICON "..\appicon.ico"
+!define MUI_WELCOMEFINISHPAGE_BITMAP "art\wizard.bmp"
+!define MUI_WELCOMEFINISHPAGE_BITMAP_STRETCH FitControl
+!define MUI_HEADERIMAGE
+!define MUI_HEADERIMAGE_RIGHT
+!define MUI_HEADERIMAGE_BITMAP "art\header.bmp"
+!define MUI_HEADERIMAGE_BITMAP_STRETCH FitControl
+!define MUI_BGCOLOR "F7F9F5"
+!define MUI_TEXTCOLOR "20352B"
+!define MUI_WELCOMEPAGE_TITLE "Welcome to NetOn"
+!define MUI_WELCOMEPAGE_TEXT "Internet on or off, whenever you choose.$\r$\n$\r$\nSetup will add NetOn to your PC.$\r$\n$\r$\nClick Next to get started."
 !define MUI_ABORTWARNING
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
-!define MUI_FINISHPAGE_TEXT "Voltura NetOn is installed.$\r$\n$\r$\nOpen it from the Start menu. Windows will request administrator permission once when NetOn starts."
+!define MUI_FINISHPAGE_TITLE "You're all set."
+!define MUI_FINISHPAGE_TEXT "Open Voltura NetOn from the Start menu.$\r$\n$\r$\nClick its icon next to the clock to turn internet on or off. Right-click for settings."
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
@@ -138,26 +164,26 @@ Section "Voltura NetOn (required)" MainSection
   Call EnsureDesktopRuntime
   !include "${INSTALL_FILES}"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
-  WriteRegStr HKCU "Software\Voltura\NetOn\Installer" "InstallDir" "$INSTDIR"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Voltura.NetOn" "DisplayName" "Voltura NetOn"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Voltura.NetOn" "DisplayVersion" "${APP_VERSION}"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Voltura.NetOn" "Publisher" "Voltura AB"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Voltura.NetOn" "InstallLocation" "$INSTDIR"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Voltura.NetOn" "DisplayIcon" "$INSTDIR\Voltura.NetOn.exe"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Voltura.NetOn" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Voltura.NetOn" "QuietUninstallString" '$\"$INSTDIR\Uninstall.exe$\" /S'
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Voltura.NetOn" "URLInfoAbout" "https://github.com/voltura/voltura-neton"
-  WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Voltura.NetOn" "NoModify" 1
-  WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Voltura.NetOn" "NoRepair" 1
+  WriteRegStr HKCU "${INSTALLER_KEY}" "InstallDir" "$INSTDIR"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "Voltura NetOn"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${APP_VERSION}"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "Publisher" "Voltura AB"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayIcon" "$INSTDIR\Voltura.NetOn.exe"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "QuietUninstallString" '$\"$INSTDIR\Uninstall.exe$\" /S'
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "URLInfoAbout" "https://github.com/voltura/voltura-neton"
+  WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoModify" 1
+  WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
   ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
-  WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Voltura.NetOn" "EstimatedSize" $0
-  CreateDirectory "$SMPROGRAMS\Voltura NetOn"
-  CreateShortcut "$SMPROGRAMS\Voltura NetOn\Voltura NetOn.lnk" "$INSTDIR\Voltura.NetOn.exe"
-  CreateShortcut "$SMPROGRAMS\Voltura NetOn\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
+  WriteRegDWORD HKCU "${UNINSTALL_KEY}" "EstimatedSize" $0
+  CreateDirectory "$SMPROGRAMS\${MENU_NAME}"
+  CreateShortcut "$SMPROGRAMS\${MENU_NAME}\Voltura NetOn.lnk" "$INSTDIR\Voltura.NetOn.exe"
+  CreateShortcut "$SMPROGRAMS\${MENU_NAME}\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
 SectionEnd
 Section /o "Desktop shortcut" DesktopSection
   CreateShortcut "$DESKTOP\Voltura NetOn.lnk" "$INSTDIR\Voltura.NetOn.exe"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Voltura.NetOn" "DesktopShortcut" "$INSTDIR"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "DesktopShortcut" "$INSTDIR"
 SectionEnd
 Function un.onInit
   SetRegView 64
@@ -168,10 +194,10 @@ Section "Uninstall"
   !include "${UNINSTALL_FILES}"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir "$INSTDIR"
-  Delete "$SMPROGRAMS\Voltura NetOn\Voltura NetOn.lnk"
-  Delete "$SMPROGRAMS\Voltura NetOn\Uninstall.lnk"
-  RMDir "$SMPROGRAMS\Voltura NetOn"
-  ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Voltura.NetOn" "DesktopShortcut"
+  Delete "$SMPROGRAMS\${MENU_NAME}\Voltura NetOn.lnk"
+  Delete "$SMPROGRAMS\${MENU_NAME}\Uninstall.lnk"
+  RMDir "$SMPROGRAMS\${MENU_NAME}"
+  ReadRegStr $0 HKCU "${UNINSTALL_KEY}" "DesktopShortcut"
   ${If} $0 == "$INSTDIR"
     Delete "$DESKTOP\Voltura NetOn.lnk"
   ${EndIf}
@@ -179,6 +205,6 @@ Section "Uninstall"
   ${If} $0 == '$\"$INSTDIR\Voltura.NetOn.exe$\"'
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Voltura NetOn"
   ${EndIf}
-  DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Voltura.NetOn"
-  DeleteRegKey HKCU "Software\Voltura\NetOn\Installer"
+  DeleteRegKey HKCU "${UNINSTALL_KEY}"
+  DeleteRegKey HKCU "${INSTALLER_KEY}"
 SectionEnd

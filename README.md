@@ -2,6 +2,8 @@
 
 Turn your PC's internet access on or off with one click from the icon next to the clock.
 
+**[Visit the NetOn website](https://voltura.github.io/voltura-neton/)** · **[Download for Windows](https://github.com/voltura/voltura-neton/releases/latest)**
+
 ## Use
 
 1. Download the **[Windows installer](https://github.com/voltura/voltura-neton/releases/latest)**.
@@ -50,7 +52,9 @@ Release files are placed in `artifacts\release-1.0.3-framework`. The build creat
 
 The installer is per-user and does not launch NetOn automatically. If .NET 10 Desktop Runtime x64 is missing, it downloads the current stable release from Microsoft's official metadata, checks its SHA-512 digest and Microsoft signature, requests elevation for Microsoft's installer, runs it without restarting Windows, rechecks the dependency, and continues. Download failure, cancellation, or failed component setup prevents a partial NetOn installation.
 
-Uninstall removes only the packaged files and installer integration, preserving preferences and unrelated files. Verification covers silent installation, upgrade, uninstall, and both failure and continuation through the component-setup flow, without launching NetOn or changing adapter state. It refuses to overwrite an existing installation during these checks. Run `scripts/verify-runtime-bootstrap.ps1` for download validation, integrity/signature rejection, installation failure, cancellation, and reboot-code checks using simulated installers; it does not install .NET on the development PC.
+Uninstall removes only the packaged files and installer integration, preserving preferences and unrelated files. Verification covers silent installation, upgrade, uninstall, and both failure and continuation through the component-setup flow, without launching NetOn or changing adapter state. The checks use isolated registry keys and shortcuts, preserving an existing user installation. Run `scripts/verify-runtime-bootstrap.ps1` for download validation, integrity/signature rejection, installation failure, cancellation, and reboot-code checks using simulated installers; it does not install .NET on the development PC.
+
+Setup uses native Windows controls, Segoe UI, Per-Monitor V2 DPI awareness, and four-times-resolution artwork. Its branding assets and generation prompt are in `assets/ARTWORK.md`. The static GitHub Pages website is in `docs/`; no website build step is needed.
 
 External IP lookup uses `https://api.ipify.org` over HTTPS with a four-second timeout. Failure or lack of internet does not block adapter controls or Exit. Toggling and discovery work offline.
 

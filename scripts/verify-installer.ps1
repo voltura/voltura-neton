@@ -2,14 +2,20 @@ param([string]$Version = '1.0.3')
 $ErrorActionPreference = 'Stop'
 $netonRoot = Split-Path -Parent $PSScriptRoot
 $releaseRoot = Join-Path $netonRoot "artifacts\release-$Version-framework"
-$installer = Join-Path $releaseRoot "Voltura-NetOn-$Version-Setup-win-x64.exe"
-$uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Voltura.NetOn'
-$menu = Join-Path ([Environment]::GetFolderPath('Programs')) 'Voltura NetOn'
-if ((Test-Path -LiteralPath $uninstallKey) -or (Test-Path -LiteralPath $menu)) { throw 'An existing installation or Start-menu folder must not be overwritten by the installer smoke test.' }
-$testRoot = Join-Path $netonRoot ('artifacts\installer-smoke-' + [guid]::NewGuid().ToString('N'))
+$testId = [guid]::NewGuid().ToString('N')
+$uninstallRelativeKey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\NetOnVerify.$testId"
+$installerRelativeKey = "Software\Voltura\NetOn\InstallerTests\$testId"
+$menuName = "NetOn Verification $testId"
+$uninstallKey = "HKCU:\$uninstallRelativeKey"
+$menu = Join-Path ([Environment]::GetFolderPath('Programs')) $menuName
+$testRoot = Join-Path $netonRoot ('artifacts\installer-smoke-' + $testId)
+$installer = Join-Path $testRoot 'SetupVerification.exe'
+$isolationArgs = @("/DUNINSTALL_KEY=$uninstallRelativeKey", "/DINSTALLER_KEY=$installerRelativeKey", "/DMENU_NAME=$menuName")
 $preferences = Join-Path $env:LOCALAPPDATA 'Voltura\NetOn\preferences.json'
 $originalPreferences = if (Test-Path -LiteralPath $preferences) { (Get-FileHash -LiteralPath $preferences).Hash } else { '' }
 New-Item -ItemType Directory -Path $testRoot | Out-Null
+& 'C:\Program Files (x86)\NSIS\makensis.exe' /V2 "/DAPP_VERSION=$Version" "/DOUTPUT_FILE=$installer" "/DINSTALL_FILES=$releaseRoot\install-files.nsh" "/DUNINSTALL_FILES=$releaseRoot\uninstall-files.nsh" @isolationArgs (Join-Path $netonRoot 'installer\NetOn.nsi')
+if ($LASTEXITCODE -ne 0) { throw 'Isolated verification installer build failed' }
 foreach ($pass in 1..2) {
     $installed = Start-Process -FilePath $installer -ArgumentList @('/S', "/D=$testRoot") -WindowStyle Hidden -PassThru -Wait
     if ($installed.ExitCode -ne 0) { throw "Installer pass $pass failed: $($installed.ExitCode)" }
@@ -40,7 +46,7 @@ $probe = Join-Path $releaseRoot 'MissingRuntimeProbe.exe'
 $missingRoot = Join-Path $testRoot 'no-runtime'
 $stub = Join-Path $testRoot 'runtime-helper-test.ps1'
 'exit 1603' | Set-Content -LiteralPath $stub
-& 'C:\Program Files (x86)\NSIS\makensis.exe' /V2 "/DAPP_VERSION=$Version" "/DOUTPUT_FILE=$probe" "/DINSTALL_FILES=$releaseRoot\install-files.nsh" "/DUNINSTALL_FILES=$releaseRoot\uninstall-files.nsh" "/DTEST_RUNTIME_ROOT=$missingRoot" "/DTEST_RUNTIME_HELPER=$stub" (Join-Path $netonRoot 'installer\NetOn.nsi')
+& 'C:\Program Files (x86)\NSIS\makensis.exe' /V2 "/DAPP_VERSION=$Version" "/DOUTPUT_FILE=$probe" "/DINSTALL_FILES=$releaseRoot\install-files.nsh" "/DUNINSTALL_FILES=$releaseRoot\uninstall-files.nsh" "/DTEST_RUNTIME_ROOT=$missingRoot" "/DTEST_RUNTIME_HELPER=$stub" @isolationArgs (Join-Path $netonRoot 'installer\NetOn.nsi')
 if ($LASTEXITCODE -ne 0) { throw 'Missing-runtime probe build failed' }
 $failedInstallRoot = Join-Path $testRoot 'must-not-install'
 $missing = Start-Process -FilePath $probe -ArgumentList @('/S', "/D=$failedInstallRoot") -WindowStyle Hidden -PassThru -Wait
@@ -52,7 +58,7 @@ New-Item -ItemType Directory -Path '$fakeDesktop' -Force | Out-Null
 'Test marker only.' | Set-Content -LiteralPath '$fakeDesktop\System.Windows.Forms.dll'
 exit 0
 "@ | Set-Content -LiteralPath $stub
-& 'C:\Program Files (x86)\NSIS\makensis.exe' /V2 "/DAPP_VERSION=$Version" "/DOUTPUT_FILE=$probe" "/DINSTALL_FILES=$releaseRoot\install-files.nsh" "/DUNINSTALL_FILES=$releaseRoot\uninstall-files.nsh" "/DTEST_RUNTIME_ROOT=$missingRoot" "/DTEST_RUNTIME_HELPER=$stub" (Join-Path $netonRoot 'installer\NetOn.nsi')
+& 'C:\Program Files (x86)\NSIS\makensis.exe' /V2 "/DAPP_VERSION=$Version" "/DOUTPUT_FILE=$probe" "/DINSTALL_FILES=$releaseRoot\install-files.nsh" "/DUNINSTALL_FILES=$releaseRoot\uninstall-files.nsh" "/DTEST_RUNTIME_ROOT=$missingRoot" "/DTEST_RUNTIME_HELPER=$stub" @isolationArgs (Join-Path $netonRoot 'installer\NetOn.nsi')
 if ($LASTEXITCODE -ne 0) { throw 'Automatic-component-setup probe build failed' }
 $completed = Start-Process -FilePath $probe -ArgumentList @('/S', "/D=$failedInstallRoot") -WindowStyle Hidden -PassThru -Wait
 if ($completed.ExitCode -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $failedInstallRoot 'Voltura.NetOn.exe'))) { throw 'Installer did not continue after component setup' }
