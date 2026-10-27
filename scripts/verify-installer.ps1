@@ -1,4 +1,4 @@
-param([string]$Version = '1.0.5')
+param([string]$Version = '1.0.6')
 $ErrorActionPreference = 'Stop'
 $netonRoot = Split-Path -Parent $PSScriptRoot
 $releaseRoot = Join-Path $netonRoot "artifacts\release-$Version-framework"

@@ -7,7 +7,8 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
-        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+        if (args.Contains("--dpi-unaware")) SetThreadDpiAwarenessContext((IntPtr)(-1));
+        Application.SetHighDpiMode(args.Contains("--dpi-unaware") ? HighDpiMode.DpiUnaware : HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         if (args.Length == 2 && args[0] == "--write-icon")
@@ -22,14 +23,14 @@ internal static class Program
             RenderSpeech(args[1]);
             return 0;
         }
-        bool renderUi = args.Length == 2 && args[0] == "--render-ui";
+        bool renderUi = args.Length >= 2 && args[0] == "--render-ui";
         if (!renderUi) { CheckLiveAdapters(); CheckIcons(); CheckInstances(); CheckPronunciation(); }
         using var context = new ApplicationContext();
         using var start = new System.Windows.Forms.Timer { Interval = 1 };
         start.Tick += async (_, _) =>
         {
             start.Stop();
-            try { if (renderUi) await RenderUiAsync(args[1]); else await CheckFormAsync(); }
+            try { if (renderUi) await RenderUiAsync(args[1]); else { await CheckPowerShellAsync(); CheckSchedules(); await CheckFormAsync(); } }
             catch (Exception ex) { failures++; Console.WriteLine("FAIL: " + ex); }
             finally { context.ExitThread(); }
         };
@@ -133,11 +134,12 @@ internal static class Program
         Directory.CreateDirectory(directory);
         var service = new FakeService { Snapshot = [new Adapter("Ethernet", Guid.NewGuid(), "Intel Ethernet Controller", "Connected", 1), new Adapter("Wi-Fi", Guid.NewGuid(), "Wireless network adapter", "Disconnected", 1)] };
         var previewSettings = new AppSettings { MuteAllSounds = true, Theme = "Light" };
-        using var form = new MainForm(service, previewSettings, false);
+        using var form = new MainForm(service, previewSettings, false, _ => Task.FromResult("203.0.113.5"));
         _ = form.Handle;
         void Prepare(System.Windows.Forms.Control control) { _ = control.Handle; control.PerformLayout(); foreach (System.Windows.Forms.Control child in control.Controls) Prepare(child); }
         Prepare(form);
         await form.RefreshAsync();
+        await form.ReadExternalIpAsync();
         Prepare(form);
         var adapterControl = Control<ComboBox>(form, "AdapterSelector");
         Require(adapterControl.Width > 150 && adapterControl.Height > 20 && adapterControl.SelectedIndex >= 0, "themed dropdown has a usable size and a selected adapter");
@@ -154,6 +156,25 @@ internal static class Program
         await form.ChangeAsync(false);
         Prepare(form);
         using (var off = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(off, new Rectangle(Point.Empty, form.Size)); off.Save(Path.Combine(directory, "neton-app-off.png")); }
+
+        foreach (string theme in new[] { "Light", "Dark" })
+        {
+            AppTheme.Set(theme);
+            using var about = new AboutForm(); Prepare(about);
+            using (var image = new Bitmap(about.Width, about.Height)) { about.DrawToBitmap(image, new Rectangle(Point.Empty, about.Size)); image.Save(Path.Combine(directory, $"neton-about-{theme.ToLowerInvariant()}.png")); }
+            using var settings = new SettingsForm(new AppSettings { Theme = theme }, [], false, _ => { }, () => { }, (_, _) => { }, () => { }); Prepare(settings);
+            using (var image = new Bitmap(settings.Width, settings.Height)) { settings.DrawToBitmap(image, new Rectangle(Point.Empty, settings.Size)); image.Save(Path.Combine(directory, $"neton-settings-{theme.ToLowerInvariant()}.png")); }
+        }
+        previewSettings.Theme = "Dark"; form.ApplyTheme(); form.SetConnectionDetails(true); Prepare(form);
+        using (var expanded = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(expanded, new Rectangle(Point.Empty, form.Size)); expanded.Save(Path.Combine(directory, "neton-details-expanded.png")); }
+        var selector = Control<ThemedComboBox>(form, "AdapterSelector");
+        using (var face = new Bitmap(selector.Width, selector.Height)) { using var g = Graphics.FromImage(face); selector.PaintFace(g); face.Save(Path.Combine(directory, "neton-dropdown-face.png")); }
+        using (var rows = new Bitmap(selector.Width, selector.ItemHeight * selector.Items.Count))
+        {
+            using var g = Graphics.FromImage(rows);
+            for (int i = 0; i < selector.Items.Count; i++) typeof(ThemedComboBox).GetMethod("OnDrawItem", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(selector, [new DrawItemEventArgs(g, selector.Font, new Rectangle(0, i * selector.ItemHeight, selector.Width, selector.ItemHeight), i, i == selector.SelectedIndex ? DrawItemState.Selected : DrawItemState.None)]);
+            rows.Save(Path.Combine(directory, "neton-dropdown-rows.png"));
+        }
         using var onIcon = StatusIcons.Draw(true, new AppSettings(), 128);
         using var offIcon = StatusIcons.Draw(false, new AppSettings(), 128);
         onIcon.Save(Path.Combine(directory, "icon-on.png")); offIcon.Save(Path.Combine(directory, "icon-off.png"));
@@ -192,13 +213,42 @@ internal static class Program
         var wifi = new Adapter("Wi-Fi", Guid.NewGuid(), "Test Wi-Fi", "Disconnected", 1);
         var spare = new Adapter("Spare", Guid.NewGuid(), "Previously disabled", "Disabled", 2);
         var service = new FakeService { Snapshot = [ethernet, wifi, spare] };
-        using var form = new MainForm(service, new AppSettings { MuteAllSounds = true }, desktopFeatures: false);
+        var settings = new AppSettings { MuteAllSounds = true };
+        using var form = new MainForm(service, settings, desktopFeatures: false, externalIpLookup: _ => Task.FromResult("203.0.113.5"));
         _ = form.Handle;
         await form.RefreshAsync();
         var selector = Control<ComboBox>(form, "AdapterSelector");
         Require(!form.Visible, "startup remains in the tray without opening a window");
         Require(selector.Items.Count == 3 && ((Adapter)selector.SelectedItem!).Id == ethernet.Id, "connected adapter is selected initially");
         Require(Control<Button>(form, "TurnOff").Enabled, "OFF control enables after successful discovery");
+        Require(!settings.ShowConnectionDetails && Control<Button>(form, "DetailsToggle").Text == "Show connection details", "connection details are collapsed by default");
+        form.SetConnectionDetails(true);
+        Require(settings.ShowConnectionDetails && Control<Button>(form, "DetailsToggle").Text == "Hide connection details", "details toggle expands and remembers the choice");
+        form.SetConnectionDetails(false);
+        Require(!System.Text.Json.JsonSerializer.Deserialize<AppSettings>(System.Text.Json.JsonSerializer.Serialize(settings))!.ShowConnectionDetails, "collapsed preference survives settings serialization");
+        Require(Control<Button>(form, "Settings").Parent!.Controls.IndexOf(Control<Button>(form, "Settings")) < Control<Button>(form, "Exit").Parent!.Controls.IndexOf(Control<Button>(form, "Exit")), "Settings appears before Exit in the main window");
+        CheckControlPainting(form);
+        var detailsButton = Control<Button>(form, "DetailsToggle");
+        Require(detailsButton.Width >= TextRenderer.MeasureText(detailsButton.Text, detailsButton.Font).Width, "details expander fits its full label at the current DPI");
+        await form.ReadExternalIpAsync();
+        Require(Control<Label>(form, "ExternalIp").Text.Contains("203.0.113.5") && Control<Button>(form, "CopyExternalIp").Enabled, "external IP and copy button are available in the main window");
+        var glyph = Control<SwitchGlyph>(form, "MainSwitch");
+        typeof(Button).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(glyph, [EventArgs.Empty]);
+        Require(service.Snapshot.All(a => !a.Enabled) && glyph.AccessibleName == "Turn internet on", "main switch click turns all adapters OFF and updates its accessible action");
+        Require(!Control<Button>(form, "CopyExternalIp").Enabled && !Control<Label>(form, "ExternalIp").Text.Contains("203.0.113.5"), "OFF hides stale IP and disables copying");
+        typeof(Button).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(glyph, [EventArgs.Empty]);
+        Require(service.Snapshot.Where(a => a.Enabled).Select(a => a.Id).ToHashSet().SetEquals([ethernet.Id, wifi.Id]), "main switch click restores exactly the previously enabled adapters");
+
+        var oldRead = new TaskCompletionSource<List<Adapter>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        service.ReadGate = oldRead;
+        Task staleRefresh = form.RefreshAsync();
+        service.ReadGate = null;
+        await form.ChangeAsync(false);
+        oldRead.SetResult([ethernet, wifi, spare]);
+        await staleRefresh;
+        Require(Control<Button>(form, "TurnOn").Enabled && !Control<Button>(form, "TurnOff").Enabled, "late refresh cannot overwrite a completed tray toggle with old state");
+        await form.ChangeAsync(true);
+
 
         service.ReadGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
         Task refresh = form.RefreshAsync();
@@ -227,6 +277,25 @@ internal static class Program
         Require(Control<Button>(form, "TurnOff").Enabled && !Control<Button>(form, "TurnOn").Enabled, "successful ON switches the controls to allow OFF");
         using (var green = form.Icon!.ToBitmap()) Require(IsStateColor(green, true), "successful ON switches the displayed icon to green");
 
+        var scheduledAt = DateTimeOffset.UtcNow;
+        form.ScheduleChange(false, TimeSpan.FromMinutes(10), scheduledAt);
+        await form.RunScheduledChangeAsync(scheduledAt.AddMinutes(9));
+        Require(service.Snapshot.Any(a => a.Enabled), "scheduled OFF does not run early");
+        await form.RunScheduledChangeAsync(scheduledAt.AddMinutes(10));
+        Require(service.Snapshot.All(a => !a.Enabled), "scheduled OFF uses the same global adapter switch");
+        form.ScheduleChange(true, TimeSpan.FromMinutes(30), scheduledAt);
+        await form.RunScheduledChangeAsync(scheduledAt.AddHours(1));
+        Require(service.Snapshot.Where(a => a.Enabled).Select(a => a.Id).ToHashSet().SetEquals([ethernet.Id, wifi.Id]), "overdue ON restores only the connections saved before OFF");
+        service.LastIds = [];
+        await form.RunScheduledChangeAsync(scheduledAt.AddDays(1));
+        Require(service.LastIds.Count == 0, "scheduled change executes only once");
+        var scheduleTray = (NotifyIcon)typeof(MainForm).GetField("tray", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+        var scheduleMenu = (ToolStripMenuItem)scheduleTray.ContextMenuStrip!.Items.Cast<ToolStripItem>().Single(i => i.Text == "Schedule");
+        Require(((ToolStripMenuItem)scheduleMenu.DropDownItems[2]).DropDownItems.Count == 7 && ((ToolStripMenuItem)scheduleMenu.DropDownItems[3]).DropDownItems.Count == 7, "tray menu offers all seven delays for both ON and OFF");
+        form.ScheduleChange(false, TimeSpan.FromHours(1), scheduledAt);
+        scheduleMenu.DropDownItems.Cast<ToolStripItem>().Single(i => i.Text == "Cancel scheduled change").PerformClick();
+        await form.RunScheduledChangeAsync(scheduledAt.AddHours(2));
+        Require(service.LastIds.Count == 0, "canceling a scheduled change prevents execution");
         service.IgnoreId = wifi.Id;
         await form.ChangeAsync(false);
         Require(Control<Button>(form, "TurnOff").Enabled, "if Wi-Fi remains enabled, OFF can be retried");
@@ -265,6 +334,99 @@ internal static class Program
         try { await new InternetSwitch(fresh, new(), () => throw new IOException("Cannot save recovery state")).SetEnabledAsync(false, CancellationToken.None); }
         catch (IOException) { refused = true; }
         Require(refused && fresh.LastIds.Count == 0, "OFF refuses to change adapters if recovery information cannot be saved");
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wparam, IntPtr lparam);
+
+    private static void CheckControlPainting(MainForm form)
+    {
+        var selector = Control<ThemedComboBox>(form, "AdapterSelector");
+        void Prepare(System.Windows.Forms.Control control) { _ = control.Handle; foreach (System.Windows.Forms.Control child in control.Controls) Prepare(child); }
+        Prepare(form);
+        Font original = selector.Font;
+        foreach (float size in new[] { 9f, 10f, 14f })
+        {
+            using var font = new Font("Segoe UI", size);
+            selector.Font = font;
+            int closed = (int)SendMessage(selector.Handle, 0x154, (IntPtr)(-1), IntPtr.Zero);
+            int row = (int)SendMessage(selector.Handle, 0x154, IntPtr.Zero, IntPtr.Zero);
+            Require(closed >= selector.Font.Height + 8 && row >= selector.Font.Height + 8 && selector.Height >= closed,
+                $"native dropdown face/rows fit {size}pt text at {selector.DeviceDpi} DPI ({closed}/{row}px)");
+            selector.Font = original;
+        }
+        foreach (string theme in new[] { "Dark", "Light" })
+        {
+            AppTheme.Set(theme);
+            var button = Control<ModernButton>(form, "TurnOff");
+            button.BackColor = AppTheme.Paper;
+            foreach (bool enabled in new[] { true, false })
+            {
+                button.Enabled = enabled;
+                using var image = new Bitmap(button.Width, button.Height);
+                using var graphics = Graphics.FromImage(image);
+                graphics.Clear(Color.Magenta);
+                typeof(ModernButton).GetMethod("OnPaint", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(button, [new PaintEventArgs(graphics, button.ClientRectangle)]);
+                Require(image.GetPixel(0, 0).ToArgb() == AppTheme.Paper.ToArgb() && image.GetPixel(image.Width - 1, image.Height - 1).ToArgb() == AppTheme.Paper.ToArgb(), $"{theme} button corners match the parent, enabled={enabled}");
+            }
+            using var about = new AboutForm();
+            _ = about.Handle;
+            Require(about.BackColor == AppTheme.Paper && about.ForeColor == AppTheme.Ink && about.AcceptButton is ModernButton && about.CancelButton == about.AcceptButton, $"{theme} About window uses app colors and keyboard dismissal");
+            var preferences = new AppSettings { Theme = theme };
+            int changed = 0;
+            using var settings = new SettingsForm(preferences, [new Speech.VoiceChoice("test", "Test voice")], false, _ => { }, () => { AppTheme.Set(preferences.Theme); changed++; }, (_, _) => { }, () => { });
+            Prepare(settings);
+            var voice = (ComboBox)settings.Controls.Find("VoiceSetting", true).Single();
+            var appearance = (ComboBox)settings.Controls.Find("ThemeSetting", true).Single();
+            Require(settings.BackColor == AppTheme.Paper && voice.SelectedItem!.ToString() == "Recorded voice - English", $"{theme} Settings window is themed and labels recorded English voice correctly");
+            voice.SelectedIndex = 1;
+            ((CheckBox)settings.Controls.Find("MuteSetting", true).Single()).Checked = true;
+            appearance.SelectedIndex = theme == "Dark" ? 1 : 2;
+            Require(preferences.VoiceId == "test" && preferences.MuteAllSounds && preferences.Theme != theme && changed == 3, "Settings edits update the same preferences and apply immediately");
+
+        }
+        form.ApplyTheme();
+    }
+
+    private static void CheckSchedules()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var schedule = new NetworkSchedule();
+        Require(NetworkSchedule.Options.Select(o => o.Delay.TotalMinutes).SequenceEqual(new double[] { 10, 30, 60, 120, 240, 480, 1440 }), "schedule intervals match the requested list");
+        foreach (var option in NetworkSchedule.Options)
+        foreach (bool enable in new[] { true, false })
+        {
+            schedule.Set(enable, option.Delay, now);
+            Require(schedule.TakeDue(now + option.Delay - TimeSpan.FromSeconds(1)) is null && schedule.TakeDue(now + option.Delay) == enable && schedule.TakeDue(now.AddDays(2)) is null, $"{option.Label} {(enable ? "ON" : "OFF")} fires at its deadline only once");
+        }
+        schedule.Set(false, TimeSpan.FromHours(1), now);
+        schedule.Set(true, TimeSpan.FromMinutes(10), now);
+        Require(schedule.TakeDue(now.AddMinutes(10)) == true, "new schedule replaces the previous schedule");
+        schedule.Set(false, TimeSpan.FromHours(24), now);
+        Require(schedule.TakeDue(now.AddHours(26)) == false, "schedule uses elapsed time and handles sleep past the deadline");
+    }
+
+    private static async Task CheckPowerShellAsync()
+    {
+        var id = Guid.NewGuid();
+        string stub = $"function Get-NetAdapter {{ [CmdletBinding()]param([switch]$IncludeHidden); Write-Progress -Activity 'Loading' -Status 'Modules'; [pscustomobject]@{{InterfaceGuid='{id:D}'}} }}; " +
+            "function Enable-NetAdapter { [CmdletBinding()]param([Parameter(ValueFromPipeline=$true)]$InputObject,[switch]$Confirm); process { Write-Progress -Activity 'Enabling' -Status 'Complete' } }; ";
+        var success = await NetworkAdapters.RunPowerShellAsync(stub + NetworkAdapters.BuildCommand([id], true), CancellationToken.None);
+        Require(success.ExitCode == 0 && string.IsNullOrWhiteSpace(success.Error), "real PowerShell runner suppresses progress without changing any adapter");
+        string failStub = stub.Replace("Write-Progress -Activity 'Enabling' -Status 'Complete'", "throw 'Adapter access denied'");
+        var failure = await NetworkAdapters.RunPowerShellAsync(failStub + NetworkAdapters.BuildCommand([id], true), CancellationToken.None);
+        Require(failure.ExitCode != 0 && failure.Error.Contains("Adapter access denied") && !failure.Error.Contains("CLIXML"), "real PowerShell failures return plain actionable text");
+        var enabled = new Adapter("Test", id, "Test", "Connected", 1);
+        await NetworkAdapters.ConfirmChangeAsync([id], true, failure, () => [enabled], CancellationToken.None);
+        Require(true, "confirmed adapter state takes precedence over a helper error");
+        bool rejected = false;
+        try { await NetworkAdapters.ConfirmChangeAsync([id], true, failure, () => [enabled with { AdminStatus = 2 }], CancellationToken.None); }
+        catch (InvalidOperationException ex) { rejected = ex.Message.Contains("Adapter access denied"); }
+        Require(rejected, "failed adapter state still reports a genuine helper error");
+        const string progress = "#< CLIXML\n<Objs xmlns=\"http://schemas.microsoft.com/powershell/2004/04\"><Obj S=\"progress\"><TN><T>System.Management.Automation.PSCustomObject</T></TN></Obj></Objs>";
+        Require(!NetworkAdapters.FailureMessage(progress).Contains("<"), "serialized progress cannot leak into the UI");
     }
 
     private sealed class FakeService : IAdapterService

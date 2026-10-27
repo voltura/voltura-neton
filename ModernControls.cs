@@ -31,7 +31,7 @@ internal static class AppTheme
     }
 }
 
-internal sealed class ModernButton : Button
+internal class ModernButton : Button
 {
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     internal Color Accent { get; set; } = AppTheme.Green;
@@ -49,8 +49,11 @@ internal sealed class ModernButton : Button
     protected override void OnMouseEnter(EventArgs e) { hovered = true; Invalidate(); base.OnMouseEnter(e); }
     protected override void OnMouseLeave(EventArgs e) { hovered = false; Invalidate(); base.OnMouseLeave(e); }
     protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
+    protected override void OnPaintBackground(PaintEventArgs e) { using var background = new SolidBrush(BackColor); e.Graphics.FillRectangle(background, ClientRectangle); }
     protected override void OnPaint(PaintEventArgs e)
     {
+        // ButtonBase's native background can leave black pixels outside our rounded face.
+        using var background = new SolidBrush(BackColor); e.Graphics.FillRectangle(background, ClientRectangle);
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         var rect = new RectangleF(1, 1, Width - 3, Height - 3);
         using var shape = AppTheme.Rounded(rect, 9 * DeviceDpi / 96f);
@@ -63,17 +66,44 @@ internal sealed class ModernButton : Button
     }
 }
 
-internal sealed class SwitchGlyph : Control
+internal sealed class CopyButton : ModernButton
+{
+    public CopyButton()
+    {
+        Quiet = true; MinimumSize = Size.Empty; Size = new Size(34, 30);
+        AccessibleName = "Copy external IP address";
+    }
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        float scale = Math.Min(Width / 34f, Height / 30f);
+        float left = (Width - 16 * scale) / 2, top = (Height - 18 * scale) / 2;
+        using var pen = new Pen(Enabled ? AppTheme.Ink : AppTheme.Muted, Math.Max(1, 1.4f * scale));
+        e.Graphics.DrawRectangle(pen, left + 4 * scale, top, 12 * scale, 14 * scale);
+        e.Graphics.DrawLines(pen, [new PointF(left + 2 * scale, top + 4 * scale), new PointF(left, top + 4 * scale), new PointF(left, top + 18 * scale), new PointF(left + 12 * scale, top + 18 * scale), new PointF(left + 12 * scale, top + 16 * scale)]);
+    }
+}
+
+internal sealed class SwitchGlyph : Button
 {
     private bool? state;
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-    internal bool? State { get => state; set { state = value; Invalidate(); } }
-    public SwitchGlyph() { DoubleBuffered = true; Size = new Size(130, 80); AccessibleName = "Internet access state"; }
+    internal bool? State { get => state; set { state = value; AccessibleName = value == true ? "Turn internet off" : "Turn internet on"; AccessibleDescription = value is null ? "Reading network status" : $"Internet is {(value.Value ? "on" : "off")}"; Invalidate(); } }
+    public SwitchGlyph()
+    {
+        FlatStyle = FlatStyle.Flat; FlatAppearance.BorderSize = 0;
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+        Size = new Size(130, 80); Cursor = Cursors.Hand;
+        AccessibleName = "Toggle internet access";
+    }
+    protected override void OnPaintBackground(PaintEventArgs e) { using var background = new SolidBrush(BackColor); e.Graphics.FillRectangle(background, ClientRectangle); }
     protected override void OnPaint(PaintEventArgs e)
     {
+        using var background = new SolidBrush(BackColor); e.Graphics.FillRectangle(background, ClientRectangle);
         using var bitmap = StatusIcons.Draw(State, new AppSettings(), Math.Max(Width, Height));
         e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
         e.Graphics.DrawImage(bitmap, new Rectangle((Width - Height) / 2, 0, Height, Height));
+        if (Focused && ShowFocusCues) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle, -3, -3), AppTheme.Ink, BackColor);
     }
 }
 
@@ -100,9 +130,9 @@ internal sealed class ArtworkPanel : Control
         float unit = DeviceDpi / 96f;
         using var font = new Font("Segoe UI", 17, FontStyle.Regular);
         using var brush = new SolidBrush(Color.FromArgb(245, 249, 230));
-        e.Graphics.DrawString("Your connection.\nYour choice.", font, brush, 18 * unit, Height - 94 * unit);
+        e.Graphics.DrawString("Internet on.\nInternet off.", font, brush, 18 * unit, Height - 94 * unit);
         using var small = new Font("Segoe UI", 8, FontStyle.Bold);
-        e.Graphics.DrawString("A LITTLE MORE CONTROL", small, brush, 18 * unit, 22 * unit);
+        e.Graphics.DrawString("NETWORK ACCESS", small, brush, 18 * unit, 22 * unit);
         e.Graphics.Restore(old);
     }
     protected override void Dispose(bool disposing) { if (disposing) artwork.Dispose(); base.Dispose(disposing); }

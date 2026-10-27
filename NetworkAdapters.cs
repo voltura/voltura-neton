@@ -81,23 +81,31 @@ internal sealed class NetworkAdapters : IAdapterService
     {
         // Only GUIDs enter the script. Attempt every adapter even if one fails.
         string values = string.Join(",", ids.Distinct().Select(id => $"'{id:D}'"));
-        return "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); " +
+        return "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; try { [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); " +
             $"$ids=@({values}); $all=@(Get-NetAdapter -IncludeHidden -ErrorAction Stop); $failures=[Collections.Generic.List[string]]::new(); " +
             "foreach($id in $ids){ try { $a=@($all | Where-Object { [guid]$_.InterfaceGuid -eq [guid]$id }); if($a.Count -ne 1){ throw ('Adapter is unavailable: '+$id) }; " +
             $"$a | {(enabled ? "Enable" : "Disable")}-NetAdapter -Confirm:$false -ErrorAction Stop " +
-            "} catch { $failures.Add($_.Exception.Message) } }; if($failures.Count -gt 0){ throw ($failures -join [Environment]::NewLine) }";
+            "} catch { $failures.Add($_.Exception.Message) } }; if($failures.Count -gt 0){ throw ($failures -join [Environment]::NewLine) } " +
+            "} catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }; exit 0";
     }
 
     internal static async Task SetAsAdministratorAsync(IReadOnlyCollection<Guid> ids, bool enabled, CancellationToken cancellationToken)
     {
-        string script = BuildCommand(ids, enabled);
+        var result = await RunPowerShellAsync(BuildCommand(ids, enabled), cancellationToken);
+        await ConfirmChangeAsync(ids, enabled, result, Read, cancellationToken);
+    }
+
+    internal sealed record PowerShellResult(int ExitCode, string Error);
+
+    internal static async Task<PowerShellResult> RunPowerShellAsync(string script, CancellationToken cancellationToken)
+    {
         var start = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"))
         {
             UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardOutput = true, RedirectStandardError = true,
             StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
         };
-        foreach (string arg in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(script)) }) start.ArgumentList.Add(arg);
+        foreach (string arg in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-OutputFormat", "Text", "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(script)) }) start.ArgumentList.Add(arg);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start Windows PowerShell.");
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
@@ -113,13 +121,39 @@ internal sealed class NetworkAdapters : IAdapterService
         }
         await output;
         string failure = await error;
-        if (process.ExitCode != 0) throw new InvalidOperationException(string.IsNullOrWhiteSpace(failure) ? "Windows could not change the adapter." : failure.Trim());
+        return new PowerShellResult(process.ExitCode, failure);
+    }
+
+    internal static async Task ConfirmChangeAsync(IReadOnlyCollection<Guid> ids, bool enabled, PowerShellResult result,
+        Func<List<Adapter>> read, CancellationToken cancellationToken)
+    {
         for (int attempt = 0; attempt < 10; attempt++)
         {
-            var current = Read();
+            var current = read();
             if (ids.All(id => current.FirstOrDefault(a => a.Id == id) is { } actual && actual.Enabled == enabled)) return;
             await Task.Delay(300, cancellationToken);
         }
-        throw new InvalidOperationException("Windows has not confirmed the requested state. Refresh the adapter status.");
+        string message = result.ExitCode != 0 ? FailureMessage(result.Error) : "Windows has not confirmed the requested state. Refresh the adapter status.";
+        throw new InvalidOperationException(message);
+    }
+
+    internal static string FailureMessage(string error)
+    {
+        const string fallback = "Windows could not change all connections. Refresh their status and try again.";
+        if (string.IsNullOrWhiteSpace(error)) return fallback;
+        if (!error.TrimStart().StartsWith("#< CLIXML", StringComparison.Ordinal)) return error.Trim();
+        try
+        {
+            // Progress records are status notifications, never an error for the user to act on.
+            var xml = System.Xml.Linq.XDocument.Parse(error[(error.IndexOf('\n') + 1)..]);
+            var messages = xml.Descendants().Where(e => string.Equals((string?)e.Attribute("S"), "Error", StringComparison.OrdinalIgnoreCase))
+                .Select(e => e.Name.LocalName == "S" ? e.Value : e.Descendants().FirstOrDefault(n => n.Name.LocalName == "ToString")?.Value)
+                .Where(value => !string.IsNullOrWhiteSpace(value));
+            string text = string.Join(Environment.NewLine, messages);
+            text = System.Text.RegularExpressions.Regex.Replace(text, "_x([0-9A-Fa-f]{4})_", m => ((char)Convert.ToInt32(m.Groups[1].Value, 16)).ToString());
+            return string.IsNullOrWhiteSpace(text) ? fallback : text.Trim();
+        }
+        catch (System.Xml.XmlException) { return fallback; }
+
     }
 }

@@ -10,6 +10,7 @@ internal sealed class AppSettings
     public bool OffRequested { get; set; }
     public bool MuteAllSounds { get; set; }
     public string? VoiceId { get; set; }
+    public bool ShowConnectionDetails { get; set; }
     public string Theme { get; set; } = "System";
     public int OnBackground { get; set; } = AppTheme.Green.ToArgb();
     public int OnForeground { get; set; } = Color.White.ToArgb();

@@ -20,13 +20,19 @@ For Windows 10 and 11. NetOn appears next to the clock:
 
 OFF disables all enabled network adapters, including Ethernet, Wi-Fi, Bluetooth PAN, mobile broadband, and virtual Ethernet. It saves the previously enabled adapters before changing them. ON restores that set, leaving previously disabled adapters disabled. Recovery information survives restarting NetOn while OFF. If there is no saved set, ON enables the available adapters.
 
-The dropdown under **Network adapters…** selects the adapter whose details you view; it does not limit the global ON/OFF action. A connected adapter is selected initially, and your detail selection is remembered by GUID.
+Connection details are collapsed by default. Choose **Show connection details** to expand them; NetOn remembers your choice. The dropdown under **Network adapters…** selects the adapter whose details you view; it does not limit the global ON/OFF action. A connected adapter is selected initially, and your detail selection is remembered by GUID.
+
+Right-click the tray icon and choose **Schedule** to turn internet on or off after 10 minutes, 30 minutes, 1 hour, 2 hours, 4 hours, 8 hours, or 24 hours. The active schedule shows a countdown and can be canceled or replaced. Keep NetOn running until it executes; after sleep, an overdue change runs when NetOn resumes. Manual toggles keep the schedule in place.
+
+Right-click the tray icon and choose **Schedule** to turn internet on or off after 10 minutes, 30 minutes, 1 hour, 2 hours, 4 hours, 8 hours, or 24 hours. The active schedule shows a countdown and can be canceled or replaced. Keep NetOn running until it executes; after sleep, an overdue change runs when NetOn resumes. Manual toggles keep the schedule in place.
 
 The original speech announcements, mute setting, customizable icon colors, reset colors, start-with-Windows setting, external-IP tooltip/copying, About, and tray toggle are included. Recordings play without a beep. The audio output stays open quietly between announcements to prevent clipped beginnings, and each phrase finishes before the latest waiting announcement plays. The default ON background is green as requested, with red for OFF. Color settings are available for both states.
 
+The main window includes a clickable network switch, the external IP with a copy button, and a **Settings** button before **Exit NetOn**. Settings and About use the selected theme; About opens without the Windows notification sound.
+
 The app window matches the installer artwork, with **Light**, **Dark**, and **Follow Windows** choices under **Settings → Appearance**. The tray menu follows the same theme. Tray and application icons have transparent backgrounds and multiple sizes for sharp rendering at different display scales.
 
-Under **Settings → Voice**, **Recorded voice (offline)** plays the publisher's own supplied recordings for every announcement, including the company name. Nothing is downloaded or synthesized during playback. No voice model or generator is included in NetOn. Installed Windows voices remain available as alternatives. [Recording sources and credits](assets/voice/README.md).
+Under **Settings → Voice**, **Recorded voice - English** plays the publisher's own supplied recordings for every announcement, including the company name. Nothing is downloaded or synthesized during playback. No voice model or generator is included in NetOn. Installed Windows voices remain available as alternatives. [Recording sources and credits](assets/voice/README.md).
 
 Windows requires administrator rights to change adapter state. The launcher requests elevation at startup; canceling that prompt exits without making network changes. The startup registration uses the launcher, which also requests elevation when launched at sign-in. There are no per-toggle elevation helpers.
 
@@ -52,7 +58,7 @@ Build release packages with [NSIS](https://nsis.sourceforge.io/) installed:
 .\scripts\verify-installer.ps1
 ```
 
-Release files are placed in `artifacts\release-1.0.5-framework`. The build creates a fresh framework-dependent payload, checks that runtime binaries are absent, builds the installer, and creates the portable ZIP. No checksum files are generated; GitHub provides asset digests.
+Release files are placed in `artifacts\release-1.0.6-framework`. The build creates a fresh framework-dependent payload, checks that runtime binaries are absent, builds the installer, and creates the portable ZIP. No checksum files are generated; GitHub provides asset digests.
 
 The installer is per-user and offers a checked-by-default **Start NetOn** option on completion. It identifies an older running NetOn in the current session, verifies its product/version, closes it before replacing files, and starts the new copy when Setup finishes. In silent upgrade mode it restarts a copy that was stopped for the upgrade. A same/newer running version is never forcibly stopped. The upgrade helper supports graceful exit on newer NetOn versions and waits before falling back to stopping an older process.
 

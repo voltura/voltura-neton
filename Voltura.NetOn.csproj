@@ -9,7 +9,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>Voltura.NetOn</AssemblyName>
     <Product>Voltura NetOn</Product>
-    <Version>1.0.5</Version>
+    <Version>1.0.6</Version>
     <Company>Voltura</Company>
     <ApplicationIcon>appicon.ico</ApplicationIcon>
     <SelfContained>false</SelfContained>
