@@ -81,7 +81,7 @@ Function ClosePreviousVersion
     StrCpy $HadRunningNetOn 1
   ${ElseIf} $0 != 0
     IfSilent close_failed
-    MessageBox MB_OK|MB_ICONEXCLAMATION "Setup could not close the older NetOn. Exit it from its tray menu and try again."
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Setup could not close the running NetOn. Exit it from its tray menu and try again."
 close_failed:
     SetErrorLevel 1618
     Quit

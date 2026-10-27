@@ -151,6 +151,9 @@ internal static class Program
         var contextMenu = (NotifyIcon)typeof(MainForm).GetField("tray", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
         var menu = contextMenu.ContextMenuStrip!; _ = menu.Handle; menu.PerformLayout(); menu.Size = menu.PreferredSize;
         using (var menuImage = new Bitmap(menu.Width, menu.Height)) { menu.DrawToBitmap(menuImage, menu.ClientRectangle); menuImage.Save(Path.Combine(directory, "neton-menu-dark.png")); }
+        var settingsMenu = ((ToolStripMenuItem)menu.Items.Cast<ToolStripItem>().Single(i => i.Text == "Settings")).DropDown;
+        _ = settingsMenu.Handle; settingsMenu.PerformLayout(); settingsMenu.Size = settingsMenu.PreferredSize;
+        using (var menuImage = new Bitmap(settingsMenu.Width, settingsMenu.Height)) { settingsMenu.DrawToBitmap(menuImage, settingsMenu.ClientRectangle); menuImage.Save(Path.Combine(directory, "neton-settings-menu-dark.png")); }
         previewSettings.Theme = "Light"; form.ApplyTheme(); Prepare(form);
         Require(!AppTheme.Dark, "light theme applies independently of the Windows setting");
         await form.ChangeAsync(false);
@@ -162,7 +165,8 @@ internal static class Program
             AppTheme.Set(theme);
             using var about = new AboutForm(); Prepare(about);
             using (var image = new Bitmap(about.Width, about.Height)) { about.DrawToBitmap(image, new Rectangle(Point.Empty, about.Size)); image.Save(Path.Combine(directory, $"neton-about-{theme.ToLowerInvariant()}.png")); }
-            using var settings = new SettingsForm(new AppSettings { Theme = theme }, [], false, _ => { }, () => { }, (_, _) => { }, () => { }); Prepare(settings);
+            using var settings = new SettingsForm(new AppSettings { Theme = theme, MuteAllSounds = true }, [], false, _ => { }, () => { }, (_, _) => { }, () => { }); Prepare(settings);
+            CheckSettingsLayout(settings);
             using (var image = new Bitmap(settings.Width, settings.Height)) { settings.DrawToBitmap(image, new Rectangle(Point.Empty, settings.Size)); image.Save(Path.Combine(directory, $"neton-settings-{theme.ToLowerInvariant()}.png")); }
         }
         previewSettings.Theme = "Dark"; form.ApplyTheme(); form.SetConnectionDetails(true); Prepare(form);
@@ -225,7 +229,9 @@ internal static class Program
         Require(selector.Items.Count == 3 && ((Adapter)selector.SelectedItem!).Id == ethernet.Id, "connected adapter is selected initially");
         Require(Control<Button>(form, "TurnOff").Enabled, "OFF control enables after successful discovery");
         Require(Control<Button>(form, "DetailsToggle").Text == "Show connection details", "connection details are collapsed by default");
+        int collapsedWidth = form.Width;
         form.SetConnectionDetails(true);
+        Require(form.Width == collapsedWidth, "expanding details keeps the main window width unchanged");
         Require(Control<Button>(form, "DetailsToggle").Text == "Hide connection details", "details toggle expands connection details");
         form.SetConnectionDetails(false);
         Require(Control<Button>(form, "DetailsToggle").Text == "Show connection details", "details toggle collapses connection details");
@@ -236,6 +242,19 @@ internal static class Program
         var internetItem = menuTray.ContextMenuStrip.Items.Cast<ToolStripItem>().Single(i => i.Text == "Internet");
         Require(internetItem.ToolTipText == "Turn Internet connection Off" && internetItem.Image is Bitmap greenSwitch && IsStateColor(greenSwitch, true), "Internet menu row shows green switch with OFF action tooltip");
         CheckControlPainting(form);
+        var footer = Control<TableLayoutPanel>(form, "MainFooter");
+        var first = footer.Controls.Cast<System.Windows.Forms.Control>().First();
+        var last = Control<Button>(form, "Exit");
+        Require(Math.Abs(first.Left - (footer.ClientSize.Width - last.Right)) <= 1, "footer buttons have equal left and right spacing");
+        var adapterSelector = Control<ThemedComboBox>(form, "AdapterSelector");
+        Require(adapterSelector.Width < adapterSelector.Parent!.Width, "adapter selector fits connection names instead of filling the column");
+        var longAdapter = new Adapter("Bluetooth Network Connection", Guid.NewGuid(), "Test Bluetooth", "Disconnected", 1);
+        adapterSelector.Items.Add(longAdapter);
+        adapterSelector.Parent.PerformLayout();
+        int nameWidth = TextRenderer.MeasureText(longAdapter.Name, adapterSelector.Font).Width;
+        Require(adapterSelector.Width >= nameWidth + 24 * adapterSelector.DeviceDpi / 96 && adapterSelector.Width < adapterSelector.Parent.Width, "long connection name fits without making the selector fill the window");
+        adapterSelector.Items.Remove(longAdapter);
+        adapterSelector.Parent.PerformLayout();
         var detailsButton = Control<Button>(form, "DetailsToggle");
         Require(detailsButton.Width >= TextRenderer.MeasureText(detailsButton.Text, detailsButton.Font).Width, "details expander fits its full label at the current DPI");
         await form.ReadExternalIpAsync();
@@ -388,6 +407,7 @@ internal static class Program
             int changed = 0;
             using var settings = new SettingsForm(preferences, [new Speech.VoiceChoice("test", "Test voice")], false, _ => { }, () => { AppTheme.Set(preferences.Theme); changed++; }, (_, _) => { }, () => { });
             Prepare(settings);
+            CheckSettingsLayout(settings, false);
             var voice = (ComboBox)settings.Controls.Find("VoiceSetting", true).Single();
             var appearance = (ComboBox)settings.Controls.Find("ThemeSetting", true).Single();
             Require(settings.BackColor == AppTheme.Paper && voice.SelectedItem!.ToString() == "Recorded voice - English", $"{theme} Settings window is themed and labels recorded English voice correctly");
@@ -397,7 +417,58 @@ internal static class Program
             Require(preferences.VoiceId == "test" && preferences.MuteAllSounds && preferences.Theme != theme && changed == 3, "Settings edits update the same preferences and apply immediately");
 
         }
+        using var checkMenu = new ContextMenuStrip { ImageScalingSize = new Size(80, 40) };
+        var checkItem = new ToolStripMenuItem("Mute all sounds") { Checked = true };
+        checkMenu.Items.Add(checkItem);
+        using var tickImage = new Bitmap(100, 60);
+        using (var g = Graphics.FromImage(tickImage))
+        {
+            g.Clear(Color.Transparent);
+            var args = new ToolStripItemImageRenderEventArgs(g, checkItem, new Rectangle(0, 0, 80, 40));
+            typeof(ThemedMenuRenderer).GetMethod("OnRenderItemCheck", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(new ThemedMenuRenderer(), [args]);
+        }
+        var points = new List<Point>();
+        for (int x = 0; x < tickImage.Width; x++) for (int y = 0; y < tickImage.Height; y++) if (tickImage.GetPixel(x, y).A > 100) points.Add(new Point(x, y));
+        int tickWidth = points.Max(p => p.X) - points.Min(p => p.X);
+        Require(tickWidth <= 16 * checkMenu.DeviceDpi / 96f && Math.Abs((points.Max(p => p.X) + points.Min(p => p.X)) / 2f - 40) < 5, "menu tick stays compact and centered in a wide image column");
         form.ApplyTheme();
+    }
+
+    private static void CheckSettingsLayout(SettingsForm settings, bool paintStates = true)
+    {
+        void Prepare(System.Windows.Forms.Control c) { _ = c.Handle; c.PerformLayout(); foreach (System.Windows.Forms.Control child in c.Controls) Prepare(child); }
+        foreach (Size size in new[] { settings.ClientSize, new Size((int)(520 * settings.DeviceDpi / 96f), (int)(460 * settings.DeviceDpi / 96f)) })
+        {
+            Size original = settings.ClientSize;
+            settings.ClientSize = size;
+            Prepare(settings);
+            var notice = settings.Controls.Find("SettingsSavedNotice", true).Single();
+            var done = settings.Controls.Find("SettingsDone", true).Single();
+            var footer = notice.Parent!;
+            Require(notice.Height >= notice.GetPreferredSize(new Size(notice.Width, 0)).Height && notice.Bottom <= done.Top && footer.ClientRectangle.Contains(done.Bounds), $"settings notice and Done fit without overlap at {settings.DeviceDpi} DPI, height {settings.ClientSize.Height}");
+            settings.ClientSize = original;
+            Prepare(settings);
+        }
+        if (!paintStates) return;
+        foreach (string name in new[] { "StartupSetting", "MuteSetting" })
+        {
+            var check = (ThemedCheckBox)settings.Controls.Find(name, true).Single();
+            bool original = check.Checked;
+            foreach (bool value in new[] { false, true })
+            {
+                check.Checked = value;
+                using var image = new Bitmap(check.Width, check.Height);
+                check.DrawToBitmap(image, check.ClientRectangle);
+                int x = (int)(4 * check.DeviceDpi / 96f), y = check.Height / 2;
+                Color expected = value ? AppTheme.Green : AppTheme.Surface;
+                int matching = 0;
+                for (int px = 0; px < Math.Min(image.Width, (int)Math.Ceiling(18 * check.DeviceDpi / 96f)); px++)
+                for (int py = 0; py < image.Height; py++)
+                    if (image.GetPixel(px, py).ToArgb() == expected.ToArgb()) matching++;
+                Require(matching > 20 * check.DeviceDpi / 96f, $"{name} uses theme colors, checked={value}");
+            }
+            check.Checked = original;
+        }
     }
 
     private static void CheckSchedules()

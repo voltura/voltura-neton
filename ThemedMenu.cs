@@ -31,8 +31,11 @@ internal sealed class ThemedMenuRenderer : ToolStripProfessionalRenderer
     protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e)
     {
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        var r = e.ImageRectangle;
-        using var pen = new Pen(AppTheme.Positive, Math.Max(1.5f, r.Height / 9f)) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        var image = e.ImageRectangle;
+        float scale = (e.ToolStrip?.DeviceDpi ?? 96) / 96f;
+        float size = Math.Min(14 * scale, Math.Min(image.Width, image.Height));
+        var r = new RectangleF(image.Left + (image.Width - size) / 2, image.Top + (image.Height - size) / 2, size, size);
+        using var pen = new Pen(AppTheme.Positive, Math.Max(1.5f, 1.7f * scale)) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
         e.Graphics.DrawLines(pen, [new PointF(r.Left + r.Width * .18f, r.Top + r.Height * .5f), new PointF(r.Left + r.Width * .42f, r.Top + r.Height * .73f), new PointF(r.Left + r.Width * .83f, r.Top + r.Height * .25f)]);
     }
     protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)

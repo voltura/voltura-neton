@@ -6,6 +6,9 @@ namespace Voltura.NetOn;
 // Keep the native dropdown, keyboard input and accessibility; paint only its closed face.
 internal sealed class ThemedComboBox : ComboBox
 {
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    internal bool SizeToContents { get; set; }
+
     public ThemedComboBox()
     {
         DrawMode = DrawMode.OwnerDrawFixed;
@@ -24,7 +27,20 @@ internal sealed class ThemedComboBox : ComboBox
     {
         Size preferred = base.GetPreferredSize(proposedSize);
         // TableLayoutPanel must reserve the real owner-drawn field height, not just the font height.
-        return new Size(preferred.Width, Math.Max(preferred.Height, Height));
+        int width = preferred.Width;
+        if (SizeToContents)
+        {
+            width = ContentWidth();
+            int available = proposedSize.Width > 0 && proposedSize.Width < int.MaxValue ? proposedSize.Width : Parent?.ClientSize.Width ?? width;
+            width = Math.Min(width, Math.Max(1, available));
+        }
+        return new Size(width, Math.Max(preferred.Height, Height));
+    }
+
+    private int ContentWidth()
+    {
+        int text = Items.Cast<object>().Select(item => TextRenderer.MeasureText(GetItemText(item), Font, Size.Empty, TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix).Width).DefaultIfEmpty(0).Max();
+        return Math.Max((int)Math.Ceiling(160 * DeviceDpi / 96f), text + (int)Math.Ceiling(46 * DeviceDpi / 96f));
     }
 
     private void UpdateMetrics()
@@ -35,6 +51,7 @@ internal sealed class ThemedComboBox : ComboBox
         ItemHeight = rowHeight; // Updates both the native selection field and list rows.
         Height = PreferredHeight;
         DropDownHeight = rowHeight * MaxDropDownItems + 2;
+        if (SizeToContents) DropDownWidth = Math.Min(ContentWidth(), Screen.FromControl(this).WorkingArea.Width - 20);
         Invalidate();
     }
 

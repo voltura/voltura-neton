@@ -11,7 +11,7 @@ internal sealed class MainForm : Form
     private readonly CancellationTokenSource lifetime = new();
     private readonly Speech speech;
     private readonly Font menuFont = new("Segoe UI", 10);
-    private readonly ThemedComboBox adapters = new() { Name = "AdapterSelector", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Top, AccessibleName = "Network adapter" };
+    private readonly ThemedComboBox adapters = new() { Name = "AdapterSelector", SizeToContents = true, DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.None, Anchor = AnchorStyles.Left | AnchorStyles.Top, AccessibleName = "Network adapter" };
     private readonly TableLayoutPanel connectionDetails = new() { Name = "ConnectionDetails", AutoSize = true, Dock = DockStyle.Top, ColumnCount = 1, RowCount = 2, Margin = Padding.Empty };
     private readonly ModernButton detailsToggle = new() { Name = "DetailsToggle", Text = "Show connection details", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Quiet = true, Size = new Size(230, 36), MinimumSize = Size.Empty, Margin = new Padding(0, 6, 0, 6) };
     private readonly Func<CancellationToken, Task<string>> externalIpLookup;
@@ -66,8 +66,8 @@ internal sealed class MainForm : Form
         Font = new Font("Segoe UI", 10);
         AutoScaleDimensions = new SizeF(96, 96);
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(820, 590);
-        MinimumSize = new Size(820, 610);
+        ClientSize = new Size(560, 590);
+        MinimumSize = new Size(560, 610);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = AppTheme.Paper;
         ForeColor = AppTheme.Ink;
@@ -80,16 +80,11 @@ internal sealed class MainForm : Form
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 72));
         var heading = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
-        var mark = new PictureBox { Image = StatusIcons.Draw(true, preferences, 128), SizeMode = PictureBoxSizeMode.Zoom, Size = new Size(48, 48), Margin = new Padding(0, 0, 10, 0) };
-        mark.Disposed += (_, _) => mark.Image?.Dispose();
-        heading.Controls.Add(mark);
         heading.Controls.Add(new Label { Text = "NetOn", AutoSize = true, Font = new Font("Segoe UI", 25, FontStyle.Bold), Margin = new Padding(0, 0, 15, 0) });
         heading.Controls.Add(new Label { Text = "by Voltura", AutoSize = true, ForeColor = AppTheme.Muted, Font = new Font("Segoe UI", 9), Margin = new Padding(0, 20, 0, 0) });
         root.Controls.Add(heading, 0, 0);
-        var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36));
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 64));
-        body.Controls.Add(new ArtworkPanel(), 0, 0);
+        var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 1, Margin = Padding.Empty };
+        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         var content = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 9, Margin = new Padding(0, 3, 0, 0) };
         content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         for (int row = 0; row < 9; row++) content.RowStyles.Add(new RowStyle(row == 8 ? SizeType.Percent : SizeType.AutoSize, row == 8 ? 100 : 0));
@@ -99,8 +94,11 @@ internal sealed class MainForm : Form
         stateRow.Controls.Add(status);
         content.Controls.Add(stateRow);
         content.Controls.Add(stateDescription);
-        var buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(0, 6, 0, 18) };
-        buttons.Controls.AddRange([turnOn, turnOff]);
+        var buttons = new TableLayoutPanel { Name = "ToggleButtons", AutoSize = true, Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(0, 6, 0, 18) };
+        buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        turnOn.Dock = turnOff.Dock = DockStyle.Fill;
+        turnOn.Margin = new Padding(0, 0, 8, 0); turnOff.Margin = Padding.Empty;
+        buttons.Controls.Add(turnOn, 0, 0); buttons.Controls.Add(turnOff, 1, 0);
         content.Controls.Add(buttons);
         var ipRow = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(0, 0, 0, 8) };
         ipRow.Controls.AddRange([externalIpLabel, copyIpButton]);
@@ -119,14 +117,21 @@ internal sealed class MainForm : Form
         hints.SetToolTip(copyIpButton, "Copy external IP address");
         content.Controls.Add(error);
         content.Controls.Add(new Label { Text = "Switches all network connections.", AutoSize = true, ForeColor = AppTheme.Muted, Font = new Font("Segoe UI", 9), Margin = new Padding(0, 12, 0, 0) });
-        body.Controls.Add(content, 1, 0);
+        body.Controls.Add(content, 0, 0);
         root.Controls.Add(body, 0, 1);
-        var footer = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(0, 16, 0, 0) };
+        var footer = new TableLayoutPanel { Name = "MainFooter", Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1, Margin = new Padding(0, 16, 0, 0) };
+        for (int i = 0; i < 4; i++) footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
         var hide = new ModernButton { Text = "Hide to tray", Quiet = true };
         var exit = new ModernButton { Name = "Exit", Text = "Exit NetOn", Quiet = true };
         var settingsButton = new ModernButton { Name = "Settings", Text = "Settings", Quiet = true };
         settingsButton.Click += (_, _) => ShowSettings();
-        footer.Controls.AddRange([refresh, hide, settingsButton, exit]);
+        var footerButtons = new[] { refresh, hide, settingsButton, exit };
+        for (int i = 0; i < footerButtons.Length; i++)
+        {
+            footerButtons[i].Dock = DockStyle.Fill;
+            footerButtons[i].Margin = i == 3 ? Padding.Empty : new Padding(0, 0, 8, 0);
+            footer.Controls.Add(footerButtons[i], i, 0);
+        }
         root.Controls.Add(footer, 0, 2);
         Controls.Add(root);
         var menu = new ContextMenuStrip { ShowItemToolTips = true };
@@ -284,7 +289,7 @@ internal sealed class MainForm : Form
         detailsToggle.AccessibleDescription = visible ? "Connection details expanded" : "Connection details collapsed";
         if (visible && ClientSize.Height < 680 * DeviceDpi / 96)
         {
-            ClientSize = new Size(ClientSize.Width, 680 * DeviceDpi / 96);
+            SetBounds(Left, Top, Width, Height + 680 * DeviceDpi / 96 - ClientSize.Height, BoundsSpecified.Height);
             var screen = Screen.FromControl(this).WorkingArea;
             if (Bottom > screen.Bottom) Top = Math.Max(screen.Top, screen.Bottom - Height);
         }
@@ -334,6 +339,7 @@ internal sealed class MainForm : Form
                 adapters.SelectedItem = found.FirstOrDefault(a => a.Id == desired);
             }
             finally { adapters.EndUpdate(); rebinding = false; }
+            adapters.Parent?.PerformLayout();
         }
         if (preferences.AdapterId is null && Selected is { } selected) { preferences.AdapterId = selected.Id; SavePreferences(); }
         hasSnapshot = true;

@@ -1,5 +1,6 @@
 param([Parameter(Mandatory)][version]$InstallingVersion, [switch]$Elevated, [int]$OnlyProcessId = 0)
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 $currentSession = [Diagnostics.Process]::GetCurrentProcess().SessionId
 $running = @(Get-Process -Name 'Voltura.NetOn' -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $currentSession -and ($OnlyProcessId -eq 0 -or $_.Id -eq $OnlyProcessId) })
 if ($running.Count -eq 0) { exit 0 }
@@ -17,14 +18,17 @@ foreach ($process in $running) {
     $info = [Diagnostics.FileVersionInfo]::GetVersionInfo($path)
     if ($info.ProductName -ne 'Voltura NetOn' -or $info.CompanyName -notlike 'Voltura*' -or [IO.Path]::GetFileName($path) -ne 'Voltura.NetOn.exe') { continue }
     $version = [version]$info.FileVersion
-    if ($version -ge $InstallingVersion) { continue }
+    if ($version -gt $InstallingVersion) { continue }
     # Newer versions can exit gracefully through their per-user named event.
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     try {
         $event = [Threading.EventWaitHandle]::OpenExisting("Local\Voltura.NetOn.v2.$sid.Exit.$($process.Id)")
         [void]$event.Set(); $event.Dispose()
     } catch { [void]$process.CloseMainWindow() }
-    if (-not $process.WaitForExit(2500)) { Stop-Process -Id $process.Id -Force; $process.WaitForExit() }
+    if (-not $process.WaitForExit(5000)) {
+        Stop-Process -Id $process.Id -Force -ErrorAction Stop
+        if (-not $process.WaitForExit(10000)) { throw 'NetOn did not stop before installation.' }
+    }
     $stopped = $true
 }
 if ($stopped) { exit 10 }

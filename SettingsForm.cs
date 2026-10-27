@@ -16,18 +16,23 @@ internal sealed class SettingsForm : Form
         Text = "NetOn settings";
         Font = new Font("Segoe UI", 10);
         AutoScaleDimensions = new SizeF(96, 96); AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(540, 500); MinimumSize = new Size(520, 490);
+        ClientSize = new Size(540, 560); MinimumSize = new Size(520, 490);
         Icon = StatusIcons.Create(true, new AppSettings());
         ShowInTaskbar = false; MaximizeBox = MinimizeBox = false;
         StartPosition = FormStartPosition.CenterParent;
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(24), ColumnCount = 1, RowCount = 11 };
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(24), ColumnCount = 1, RowCount = 2 };
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var scroll = new Panel { Name = "SettingsScroll", Dock = DockStyle.Fill, AutoScroll = true, Margin = Padding.Empty };
+        var layout = new TableLayoutPanel { Name = "SettingsContent", Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = Padding.Empty, ColumnCount = 1, RowCount = 9 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int i = 0; i < 11; i++) layout.RowStyles.Add(new RowStyle(i == 9 ? SizeType.Percent : SizeType.AutoSize, i == 9 ? 100 : 0));
+        for (int i = 0; i < 9; i++) layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.Controls.Add(new Label { Text = "Settings", AutoSize = true, Font = new Font("Segoe UI", 20, FontStyle.Bold), Margin = new Padding(0, 0, 0, 16) });
-        var start = new CheckBox { Name = "StartupSetting", Text = "Start with Windows", Checked = startup, AutoSize = true, Margin = new Padding(0, 0, 0, 10) };
+        var start = new ThemedCheckBox { Name = "StartupSetting", Text = "Start with Windows", Checked = startup, AutoSize = true, Margin = new Padding(0, 0, 0, 10) };
         start.CheckedChanged += (_, _) => setStartup(start.Checked);
         layout.Controls.Add(start);
-        var mute = new CheckBox { Name = "MuteSetting", Text = "Mute all sounds", Checked = preferences.MuteAllSounds, AutoSize = true, Margin = new Padding(0, 0, 0, 16) };
+        var mute = new ThemedCheckBox { Name = "MuteSetting", Text = "Mute all sounds", Checked = preferences.MuteAllSounds, AutoSize = true, Margin = new Padding(0, 0, 0, 16) };
         mute.CheckedChanged += (_, _) => { preferences.MuteAllSounds = mute.Checked; changed(); };
         layout.Controls.Add(mute);
         layout.Controls.Add(new Label { Text = "Voice", AutoSize = true, Margin = new Padding(0, 0, 0, 5) });
@@ -54,10 +59,16 @@ internal sealed class SettingsForm : Form
         var reset = new ModernButton { Text = "Reset colors", Quiet = true, Size = new Size(150, 40), MinimumSize = Size.Empty };
         reset.Click += (_, _) => resetColors(); colors.Controls.Add(reset);
         layout.Controls.Add(colors);
-        layout.Controls.Add(new Label { Text = "Changes are saved automatically.", AutoSize = true, Margin = new Padding(0, 8, 0, 8) });
-        var close = new ModernButton { Text = "Done", DialogResult = DialogResult.OK, Anchor = AnchorStyles.Right, Margin = Padding.Empty };
-        layout.Controls.Add(close); AcceptButton = CancelButton = close;
-        Controls.Add(layout); ApplyTheme(); ResumeLayout(true);
+        var footer = new TableLayoutPanel { Name = "SettingsFooter", AutoSize = true, Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Margin = Padding.Empty };
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        footer.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        footer.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        footer.Controls.Add(new Label { Name = "SettingsSavedNotice", Text = "Changes are saved automatically.", AutoSize = true, Dock = DockStyle.Top, Margin = new Padding(0, 12, 0, 12) });
+        var close = new ModernButton { Name = "SettingsDone", Text = "Done", DialogResult = DialogResult.OK, Anchor = AnchorStyles.Right, Margin = Padding.Empty };
+        footer.Controls.Add(close); AcceptButton = CancelButton = close;
+        scroll.Controls.Add(layout);
+        root.Controls.Add(scroll, 0, 0); root.Controls.Add(footer, 0, 1);
+        Controls.Add(root); ApplyTheme(); ResumeLayout(true);
     }
 
     internal void ApplyTheme()

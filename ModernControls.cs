@@ -113,6 +113,7 @@ internal sealed class ArtworkPanel : Control
     public ArtworkPanel()
     {
         DoubleBuffered = true;
+        SetStyle(ControlStyles.ResizeRedraw, true);
         using var stream = typeof(ArtworkPanel).Assembly.GetManifestResourceStream("Voltura.NetOn.Artwork")!;
         using var image = Image.FromStream(stream);
         artwork = new Bitmap(image);
