@@ -166,6 +166,9 @@ internal static class Program
             using (var image = new Bitmap(settings.Width, settings.Height)) { settings.DrawToBitmap(image, new Rectangle(Point.Empty, settings.Size)); image.Save(Path.Combine(directory, $"neton-settings-{theme.ToLowerInvariant()}.png")); }
         }
         previewSettings.Theme = "Dark"; form.ApplyTheme(); form.SetConnectionDetails(true); Prepare(form);
+        var details = Control<Label>(form, "AdapterDetails");
+        Console.WriteLine($"Detail gap={details.Top - adapterControl.Bottom}, margin={details.Margin}, dpi={form.DeviceDpi}, detail={details.Bounds}, adapter={adapterControl.Bounds}");
+        Require(details.Top - adapterControl.Bottom >= 18 * form.DeviceDpi / 96, "adapter description has DPI-scaled space below the dropdown");
         using (var expanded = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(expanded, new Rectangle(Point.Empty, form.Size)); expanded.Save(Path.Combine(directory, "neton-details-expanded.png")); }
         var selector = Control<ThemedComboBox>(form, "AdapterSelector");
         using (var face = new Bitmap(selector.Width, selector.Height)) { using var g = Graphics.FromImage(face); selector.PaintFace(g); face.Save(Path.Combine(directory, "neton-dropdown-face.png")); }
@@ -213,7 +216,7 @@ internal static class Program
         var wifi = new Adapter("Wi-Fi", Guid.NewGuid(), "Test Wi-Fi", "Disconnected", 1);
         var spare = new Adapter("Spare", Guid.NewGuid(), "Previously disabled", "Disabled", 2);
         var service = new FakeService { Snapshot = [ethernet, wifi, spare] };
-        var settings = new AppSettings { MuteAllSounds = true };
+        var settings = System.Text.Json.JsonSerializer.Deserialize<AppSettings>("{\"MuteAllSounds\":true,\"ShowConnectionDetails\":true}")!;
         using var form = new MainForm(service, settings, desktopFeatures: false, externalIpLookup: _ => Task.FromResult("203.0.113.5"));
         _ = form.Handle;
         await form.RefreshAsync();
@@ -221,12 +224,17 @@ internal static class Program
         Require(!form.Visible, "startup remains in the tray without opening a window");
         Require(selector.Items.Count == 3 && ((Adapter)selector.SelectedItem!).Id == ethernet.Id, "connected adapter is selected initially");
         Require(Control<Button>(form, "TurnOff").Enabled, "OFF control enables after successful discovery");
-        Require(!settings.ShowConnectionDetails && Control<Button>(form, "DetailsToggle").Text == "Show connection details", "connection details are collapsed by default");
+        Require(Control<Button>(form, "DetailsToggle").Text == "Show connection details", "connection details are collapsed by default");
         form.SetConnectionDetails(true);
-        Require(settings.ShowConnectionDetails && Control<Button>(form, "DetailsToggle").Text == "Hide connection details", "details toggle expands and remembers the choice");
+        Require(Control<Button>(form, "DetailsToggle").Text == "Hide connection details", "details toggle expands connection details");
         form.SetConnectionDetails(false);
-        Require(!System.Text.Json.JsonSerializer.Deserialize<AppSettings>(System.Text.Json.JsonSerializer.Serialize(settings))!.ShowConnectionDetails, "collapsed preference survives settings serialization");
+        Require(Control<Button>(form, "DetailsToggle").Text == "Show connection details", "details toggle collapses connection details");
         Require(Control<Button>(form, "Settings").Parent!.Controls.IndexOf(Control<Button>(form, "Settings")) < Control<Button>(form, "Exit").Parent!.Controls.IndexOf(Control<Button>(form, "Exit")), "Settings appears before Exit in the main window");
+        var menuTray = (NotifyIcon)typeof(MainForm).GetField("tray", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+        Require(menuTray.ContextMenuStrip!.Items[0].Text == "Open NetOn" && menuTray.ContextMenuStrip.Items.OfType<ToolStripSeparator>().Count() == 4, "tray menu names the main window and separates its action groups");
+        Require(menuTray.Text.Contains("Click to turn internet OFF"), "ON tooltip includes the click action");
+        var internetItem = menuTray.ContextMenuStrip.Items.Cast<ToolStripItem>().Single(i => i.Text == "Internet");
+        Require(internetItem.ToolTipText == "Turn Internet connection Off" && internetItem.Image is Bitmap greenSwitch && IsStateColor(greenSwitch, true), "Internet menu row shows green switch with OFF action tooltip");
         CheckControlPainting(form);
         var detailsButton = Control<Button>(form, "DetailsToggle");
         Require(detailsButton.Width >= TextRenderer.MeasureText(detailsButton.Text, detailsButton.Font).Width, "details expander fits its full label at the current DPI");
@@ -235,6 +243,8 @@ internal static class Program
         var glyph = Control<SwitchGlyph>(form, "MainSwitch");
         typeof(Button).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(glyph, [EventArgs.Empty]);
         Require(service.Snapshot.All(a => !a.Enabled) && glyph.AccessibleName == "Turn internet on", "main switch click turns all adapters OFF and updates its accessible action");
+        Require(menuTray.Text.Contains("Click to turn internet ON"), "OFF tooltip includes the click action");
+        Require(internetItem.ToolTipText == "Turn Internet connection On" && internetItem.Image is Bitmap redSwitch && IsStateColor(redSwitch, false), "Internet menu row shows red switch with ON action tooltip");
         Require(!Control<Button>(form, "CopyExternalIp").Enabled && !Control<Label>(form, "ExternalIp").Text.Contains("203.0.113.5"), "OFF hides stale IP and disables copying");
         typeof(Button).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(glyph, [EventArgs.Empty]);
         Require(service.Snapshot.Where(a => a.Enabled).Select(a => a.Id).ToHashSet().SetEquals([ethernet.Id, wifi.Id]), "main switch click restores exactly the previously enabled adapters");

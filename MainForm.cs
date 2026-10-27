@@ -18,7 +18,7 @@ internal sealed class MainForm : Form
     private readonly Label status = new() { AutoSize = true, Text = "Checking…", Font = new Font("Segoe UI", 23, FontStyle.Regular), Margin = new Padding(0, 17, 0, 0) };
     private readonly SwitchGlyph stateGlyph = new() { Name = "MainSwitch", Margin = new Padding(0, 0, 4, 0), Size = new Size(90, 75) };
     private readonly Label stateDescription = new() { AutoSize = true, MaximumSize = new Size(420, 0), Font = new Font("Segoe UI", 10), ForeColor = AppTheme.Muted, Margin = new Padding(0, 1, 0, 6) };
-    private readonly Label detail = new() { AutoSize = true, MaximumSize = new Size(420, 0), Font = new Font("Segoe UI", 9), ForeColor = AppTheme.Muted, Margin = new Padding(0, 10, 0, 7) };
+    private readonly Label detail = new() { Name = "AdapterDetails", AutoSize = true, MaximumSize = new Size(420, 0), Font = new Font("Segoe UI", 9), ForeColor = AppTheme.Muted, Margin = new Padding(0, 10, 0, 7) };
     private readonly Label error = new() { Name = "ErrorMessage", AutoSize = true, MaximumSize = new Size(420, 0), ForeColor = AppTheme.Red, Font = new Font("Segoe UI", 9) };
     private readonly ModernButton turnOn = new() { Name = "TurnOn", Text = "Turn on", Accent = AppTheme.Green };
     private readonly ModernButton turnOff = new() { Name = "TurnOff", Text = "Turn off", Accent = AppTheme.Red };
@@ -27,10 +27,14 @@ internal sealed class MainForm : Form
     private readonly CopyButton copyIpButton = new() { Name = "CopyExternalIp", Margin = Padding.Empty, Enabled = false };
     private readonly ToolTip hints = new();
     private SettingsForm? settingsWindow;
+    private bool detailsExpanded;
     private bool readingIp;
     private DateTimeOffset nextIpRead;
     private readonly NotifyIcon tray;
-    private readonly ToolStripMenuItem trayToggle = new("Toggle internet access");
+    private readonly ToolStripMenuItem trayToggle = new("Internet");
+    private Bitmap? menuSwitchImage;
+    private bool? menuSwitchState;
+    private bool menuSwitchRendered;
     private readonly NetworkSchedule schedule = new();
     private readonly ToolStripMenuItem scheduleSummary = new("No scheduled change") { Enabled = false };
     private readonly ToolStripMenuItem cancelSchedule = new("Cancel scheduled change") { Enabled = false };
@@ -62,7 +66,7 @@ internal sealed class MainForm : Form
         Font = new Font("Segoe UI", 10);
         AutoScaleDimensions = new SizeF(96, 96);
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(820, preferences.ShowConnectionDetails ? 680 : 590);
+        ClientSize = new Size(820, 590);
         MinimumSize = new Size(820, 610);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = AppTheme.Paper;
@@ -103,11 +107,14 @@ internal sealed class MainForm : Form
         content.Controls.Add(ipRow);
         content.Controls.Add(detailsToggle);
         connectionDetails.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        connectionDetails.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        connectionDetails.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        adapters.Margin = Padding.Empty;
         connectionDetails.Controls.Add(adapters);
         connectionDetails.Controls.Add(detail);
-        connectionDetails.Visible = preferences.ShowConnectionDetails;
-        detailsToggle.Text = preferences.ShowConnectionDetails ? "Hide connection details" : "Show connection details";
-        detailsToggle.Click += (_, _) => SetConnectionDetails(!preferences.ShowConnectionDetails);
+        connectionDetails.Visible = false;
+        detailsToggle.Text = "Show connection details";
+        detailsToggle.Click += (_, _) => SetConnectionDetails(!detailsExpanded);
         content.Controls.Add(connectionDetails);
         hints.SetToolTip(copyIpButton, "Copy external IP address");
         content.Controls.Add(error);
@@ -122,15 +129,16 @@ internal sealed class MainForm : Form
         footer.Controls.AddRange([refresh, hide, settingsButton, exit]);
         root.Controls.Add(footer, 0, 2);
         Controls.Add(root);
-        var menu = new ContextMenuStrip();
+        var menu = new ContextMenuStrip { ShowItemToolTips = true };
         menu.Opening += (_, _) => ApplyTheme();
-        menu.Items.Add("About NetOn", null, (_, _) =>
+        var aboutMenuItem = new ToolStripMenuItem("About NetOn", null, (_, _) =>
         {
             Say("NetOn by Voltura AB");
             using var about = new AboutForm();
             about.ShowDialog(this);
         });
-        menu.Items.Add("Network adapters…", null, (_, _) => { SetConnectionDetails(true); ShowWindow(); });
+        menu.Items.Add("Open NetOn", null, (_, _) => ShowWindow());
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(trayToggle);
         var scheduleMenu = new ToolStripMenuItem("Schedule");
         scheduleMenu.DropDownItems.Add(scheduleSummary);
@@ -148,6 +156,7 @@ internal sealed class MainForm : Form
         scheduleMenu.DropDownItems.Add(new ToolStripSeparator());
         scheduleMenu.DropDownItems.Add(new ToolStripMenuItem("Runs while NetOn is open") { Enabled = false });
         menu.Items.Add(scheduleMenu);
+        menu.Items.Add(new ToolStripSeparator());
         var settingsMenu = new ToolStripMenuItem("Settings");
         var startup = new ToolStripMenuItem("Start with Windows") { Tag = "startup", Checked = desktopFeatures && AppSettings.StartWithWindows };
         startup.Click += (_, _) =>
@@ -213,6 +222,8 @@ internal sealed class MainForm : Form
         menu.Items.Add(settingsMenu);
         menu.Items.Add(copyIp);
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(aboutMenuItem);
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit NetOn", null, (_, _) => ExitApp());
         tray = new NotifyIcon { Icon = unknownIcon, Text = "NetOn — reading adapters", ContextMenuStrip = menu, Visible = desktopFeatures };
         tray.MouseClick += async (_, e) => { if (e.Button == MouseButtons.Left) await ToggleAsync(); };
@@ -267,7 +278,7 @@ internal sealed class MainForm : Form
 
     internal void SetConnectionDetails(bool visible)
     {
-        preferences.ShowConnectionDetails = visible;
+        detailsExpanded = visible;
         connectionDetails.Visible = visible;
         detailsToggle.Text = visible ? "Hide connection details" : "Show connection details";
         detailsToggle.AccessibleDescription = visible ? "Connection details expanded" : "Connection details collapsed";
@@ -277,10 +288,13 @@ internal sealed class MainForm : Form
             var screen = Screen.FromControl(this).WorkingArea;
             if (Bottom > screen.Bottom) Top = Math.Max(screen.Top, screen.Bottom - Height);
         }
-        SavePreferences();
     }
 
-    private void ShowWindow() { showRequested = true; Show(); WindowState = FormWindowState.Normal; Activate(); }
+    internal void ShowWindow()
+    {
+        if (!Visible) SetConnectionDetails(false);
+        showRequested = true; Show(); WindowState = FormWindowState.Normal; Activate();
+    }
 
     internal async Task RefreshAsync()
     {
@@ -401,6 +415,10 @@ internal sealed class MainForm : Form
         turnOn.Enabled = !changing && known && (!anyEnabled || preferences.OffRequested);
         turnOff.Enabled = !changing && known && anyEnabled;
         trayToggle.Enabled = !changing && known;
+        UpdateMenuSwitch(changing || !known ? null : anyEnabled);
+        trayToggle.ToolTipText = changing ? "Changing network connections" : !known ? "Network status unavailable" : anyEnabled ? "Turn Internet connection Off" : "Turn Internet connection On";
+        trayToggle.AccessibleName = known ? $"Internet {(anyEnabled ? "on" : "off")}" : "Internet status unavailable";
+        trayToggle.AccessibleDescription = trayToggle.ToolTipText;
         if (changing) return;
         bool? enabled = known ? anyEnabled : null;
         stateGlyph.State = enabled;
@@ -420,16 +438,26 @@ internal sealed class MainForm : Form
         if (schedule.Due is not null) stateDescription.Text += "\nScheduled: " + scheduleSummary.Text;
         status.ForeColor = anyEnabled ? AppTheme.Positive : AppTheme.Negative;
         detail.Text = Selected is { } adapter ? $"{adapter.Description}\n{adapter.Name}: {adapter.Status}\nEnabled adapters: {snapshot.Count(a => a.Enabled)} of {snapshot.Count}" : $"Enabled adapters: {snapshot.Count(a => a.Enabled)} of {snapshot.Count}";
-        trayToggle.Text = $"Turn internet {(anyEnabled ? "OFF" : "ON")}";
-        string tip = $"NetOn: Internet {(anyEnabled ? "ON" : "OFF")}";
+        string tip = $"NetOn: Internet {(anyEnabled ? "ON" : "OFF")}\nClick to turn internet {(anyEnabled ? "OFF" : "ON")}";
         if (schedule.Due is not null) tip += "\n" + scheduleSummary.Text;
-        else if (anyEnabled && externalIp.Length > 0) tip += "\n" + externalIp;
-        tray.Text = tip.Length > 63 ? tip[..63] : tip;
+        if (anyEnabled && externalIp.Length > 0) tip += "\n" + externalIp;
+        tray.Text = tip.Length > 127 ? tip[..127] : tip;
         if (announcedState != anyEnabled)
         {
             Say(anyEnabled ? "Internet enabled" : "Internet disabled");
             announcedState = anyEnabled;
         }
+    }
+
+    private void UpdateMenuSwitch(bool? state)
+    {
+        if (menuSwitchRendered && menuSwitchState == state) return;
+        using var square = StatusIcons.Draw(state, preferences, 128);
+        var image = square.Clone(new Rectangle(0, 24, 128, 80), System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        var previous = menuSwitchImage;
+        menuSwitchImage = image; menuSwitchState = state; menuSwitchRendered = true;
+        trayToggle.Image = image;
+        previous?.Dispose();
     }
 
     private void Say(string text) { if (desktopFeatures && !preferences.MuteAllSounds && !exiting) speech.Say(text); }
@@ -449,6 +477,7 @@ internal sealed class MainForm : Form
         {
             strip.Renderer = new ThemedMenuRenderer(); strip.BackColor = AppTheme.Surface; strip.ForeColor = AppTheme.Ink;
             strip.Font = menuFont;
+            if (strip == tray.ContextMenuStrip) strip.ImageScalingSize = new Size((int)Math.Ceiling(32 * strip.DeviceDpi / 96f), (int)Math.Ceiling(20 * strip.DeviceDpi / 96f));
             foreach (ToolStripItem item in strip.Items)
             {
                 item.ForeColor = AppTheme.Ink;
@@ -471,7 +500,9 @@ internal sealed class MainForm : Form
         settingsWindow?.ApplyTheme();
         Render();
     }
-    protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); int dark = AppTheme.Dark ? 1 : 0; DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int)); }
+    protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); UpdateDetailSpacing(); int dark = AppTheme.Dark ? 1 : 0; DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int)); }
+    protected override void OnDpiChanged(DpiChangedEventArgs e) { base.OnDpiChanged(e); UpdateDetailSpacing(); }
+    private void UpdateDetailSpacing() => detail.Margin = new Padding(0, (int)Math.Ceiling(18 * DeviceDpi / 96f), 0, (int)Math.Ceiling(7 * DeviceDpi / 96f));
     private void Report(Exception ex) { if (exiting || IsDisposed) return; error.Text = ex.Message; }
     private void SavePreferences() { if (!desktopFeatures) return; try { preferences.Save(); } catch (Exception ex) { Report(ex); } }
 
@@ -514,6 +545,7 @@ internal sealed class MainForm : Form
 
     private void RebuildIcons()
     {
+        menuSwitchRendered = false;
         Icon? previousOn = customOn, previousOff = customOff;
         customOn = StatusIcons.Create(true, preferences); customOff = StatusIcons.Create(false, preferences);
         Render(); previousOn?.Dispose(); previousOff?.Dispose();
@@ -571,7 +603,7 @@ internal sealed class MainForm : Form
             exiting = true; lifetime.Cancel(); timer.Dispose();
             tray.Visible = false; tray.ContextMenuStrip?.Dispose(); tray.Dispose();
             speech.Dispose(); onIcon.Dispose(); offIcon.Dispose(); unknownIcon.Dispose(); customOn?.Dispose(); customOff?.Dispose();
-            menuFont.Dispose(); hints.Dispose();
+            menuFont.Dispose(); hints.Dispose(); menuSwitchImage?.Dispose();
         }
         base.Dispose(disposing);
     }

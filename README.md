@@ -20,7 +20,7 @@ For Windows 10 and 11. NetOn appears next to the clock:
 
 OFF disables all enabled network adapters, including Ethernet, Wi-Fi, Bluetooth PAN, mobile broadband, and virtual Ethernet. It saves the previously enabled adapters before changing them. ON restores that set, leaving previously disabled adapters disabled. Recovery information survives restarting NetOn while OFF. If there is no saved set, ON enables the available adapters.
 
-Connection details are collapsed by default. Choose **Show connection details** to expand them; NetOn remembers your choice. The dropdown under **Network adapters…** selects the adapter whose details you view; it does not limit the global ON/OFF action. A connected adapter is selected initially, and your detail selection is remembered by GUID.
+The window opens with connection details collapsed. Choose **Show connection details** to expand them. **Open NetOn** in the tray menu opens the main window. The dropdown selects the adapter whose details you view; it does not limit the global ON/OFF action. A connected adapter is selected initially, and your detail selection is remembered by GUID.
 
 Right-click the tray icon and choose **Schedule** to turn internet on or off after 10 minutes, 30 minutes, 1 hour, 2 hours, 4 hours, 8 hours, or 24 hours. The active schedule shows a countdown and can be canceled or replaced. Keep NetOn running until it executes; after sleep, an overdue change runs when NetOn resumes. Manual toggles keep the schedule in place.
 
@@ -58,7 +58,7 @@ Build release packages with [NSIS](https://nsis.sourceforge.io/) installed:
 .\scripts\verify-installer.ps1
 ```
 
-Release files are placed in `artifacts\release-1.0.6-framework`. The build creates a fresh framework-dependent payload, checks that runtime binaries are absent, builds the installer, and creates the portable ZIP. No checksum files are generated; GitHub provides asset digests.
+Release files are placed in `artifacts\release-1.0.7-framework`. The build creates a fresh framework-dependent payload, checks that runtime binaries are absent, builds the installer, and creates the portable ZIP. No checksum files are generated; GitHub provides asset digests.
 
 The installer is per-user and offers a checked-by-default **Start NetOn** option on completion. It identifies an older running NetOn in the current session, verifies its product/version, closes it before replacing files, and starts the new copy when Setup finishes. In silent upgrade mode it restarts a copy that was stopped for the upgrade. A same/newer running version is never forcibly stopped. The upgrade helper supports graceful exit on newer NetOn versions and waits before falling back to stopping an older process.
 

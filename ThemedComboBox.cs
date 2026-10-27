@@ -10,6 +10,7 @@ internal sealed class ThemedComboBox : ComboBox
     {
         DrawMode = DrawMode.OwnerDrawFixed;
         FormattingEnabled = true;
+        AutoSize = true;
         IntegralHeight = false;
         MaxDropDownItems = 8;
     }
@@ -18,6 +19,13 @@ internal sealed class ThemedComboBox : ComboBox
     protected override void OnFontChanged(EventArgs e) { base.OnFontChanged(e); UpdateMetrics(); }
     protected override void OnDpiChangedAfterParent(EventArgs e) { base.OnDpiChangedAfterParent(e); UpdateMetrics(); }
     protected override void OnDropDown(EventArgs e) { UpdateMetrics(); base.OnDropDown(e); }
+
+    public override Size GetPreferredSize(Size proposedSize)
+    {
+        Size preferred = base.GetPreferredSize(proposedSize);
+        // TableLayoutPanel must reserve the real owner-drawn field height, not just the font height.
+        return new Size(preferred.Width, Math.Max(preferred.Height, Height));
+    }
 
     private void UpdateMetrics()
     {
