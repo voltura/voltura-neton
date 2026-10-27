@@ -2,7 +2,7 @@
 
 Turn your PC's internet access on or off with one click from the icon next to the clock.
 
-**[Visit the NetOn website](https://voltura.github.io/voltura-neton/)** · **[Download for Windows](https://github.com/voltura/voltura-neton/releases/latest)**
+**[Visit the NetOn website](https://neton.voltura.se/)** · **[Download for Windows](https://github.com/voltura/voltura-neton/releases/latest)**
 
 ## Use
 
