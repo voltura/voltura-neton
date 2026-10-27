@@ -2,11 +2,16 @@ using System.Collections.Concurrent;
 using System.Media;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Security;
+using System.Text.RegularExpressions;
 
 namespace Voltura.NetOn;
 
 internal sealed class Speech : IDisposable
 {
+    internal sealed record VoiceChoice(string Id, string Name);
+    private readonly Func<string?> preferredVoice;
+    public Speech(Func<string?>? preferredVoice = null) => this.preferredVoice = preferredVoice ?? (() => null);
     internal const int SampleRate = 22050;
     internal const int CueMilliseconds = 1200;
     private readonly BlockingCollection<string> pending = new(1);
@@ -40,7 +45,7 @@ internal sealed class Speech : IDisposable
             if (shutdown.IsSet) return;
             try
             {
-                byte[] wave = RenderWave(text);
+                byte[] wave = RenderWave(text, preferredVoice());
                 using var stream = new MemoryStream(wave);
                 using var output = new SoundPlayer(stream);
                 output.Load();
@@ -62,17 +67,68 @@ internal sealed class Speech : IDisposable
         }
     }
 
-    internal static byte[] RenderWave(string text)
+    internal static IReadOnlyList<VoiceChoice> ListVoices()
+    {
+        object? voice = null, tokens = null;
+        var choices = new List<VoiceChoice>();
+        try
+        {
+            voice = Activator.CreateInstance(Type.GetTypeFromProgID("SAPI.SpVoice")!);
+            tokens = ((dynamic)voice!).GetVoices();
+            for (int i = 0; i < ((dynamic)tokens).Count; i++)
+            {
+                object token = ((dynamic)tokens).Item(i);
+                try { choices.Add(new VoiceChoice(((dynamic)token).Id, ((dynamic)token).GetDescription())); }
+                finally { Marshal.FinalReleaseComObject(token); }
+            }
+        }
+        catch (Exception ex) when (ex is COMException or ArgumentException or Microsoft.CSharp.RuntimeBinder.RuntimeBinderException) { }
+        finally { if (tokens is not null) Marshal.FinalReleaseComObject(tokens); if (voice is not null) Marshal.FinalReleaseComObject(voice); }
+        return choices;
+    }
+
+    internal static string PronunciationMarkup(string text, bool english)
+    {
+        string escaped = SecurityElement.Escape(text) ?? "";
+        string brand = english
+            ? "<pron sym=\"v ao l - t uw 1 - r aa\">Voltura</pron><silence msec=\"100\"/><pron sym=\"aa 1 - b eh 1\">AB</pron>"
+            : "Voltuura, Aabe";
+        return Regex.Replace(escaped, @"\bVoltura\s+AB\b", _ => brand, RegexOptions.IgnoreCase);
+    }
+
+    internal static byte[] RenderWave(string text, string? voiceId = null)
     {
         object? voice = null, memory = null;
         try
         {
             voice = Activator.CreateInstance(Type.GetTypeFromProgID("SAPI.SpVoice")!);
+            object tokens = ((dynamic)voice!).GetVoices();
+            try
+            {
+                for (int i = 0; i < ((dynamic)tokens).Count; i++)
+                {
+                    object token = ((dynamic)tokens).Item(i);
+                    try
+                    {
+                        bool matches = voiceId is not null ? ((string)((dynamic)token).Id).Equals(voiceId, StringComparison.OrdinalIgnoreCase)
+                            : ((string)((dynamic)token).GetDescription()).Contains("Zira", StringComparison.OrdinalIgnoreCase);
+                        if (matches) { ((dynamic)voice).Voice = token; break; }
+                    }
+                    finally { Marshal.FinalReleaseComObject(token); }
+                }
+            }
+            finally { Marshal.FinalReleaseComObject(tokens); }
+            ((dynamic)voice).Rate = -1;
             memory = Activator.CreateInstance(Type.GetTypeFromProgID("SAPI.SpMemoryStream")!);
             dynamic output = memory!;
             output.Format.Type = 22; // 22.05 kHz, 16-bit mono PCM.
             ((dynamic)voice!).AudioOutputStream = output;
-            ((dynamic)voice).Speak(text, 16); // Synthesize the whole phrase as plain text, without playback.
+            object selected = ((dynamic)voice).Voice;
+            string language;
+            try { language = ((dynamic)selected).GetAttribute("Language"); }
+            finally { Marshal.FinalReleaseComObject(selected); }
+            bool english = language.Split(';').Any(part => int.TryParse(part, System.Globalization.NumberStyles.HexNumber, null, out int id) && (id & 0x3ff) == 9);
+            ((dynamic)voice).Speak(PronunciationMarkup(text, english), 8);
             byte[] speech = (byte[])output.GetData();
             int cueSamples = SampleRate * CueMilliseconds / 1000;
             int dataLength = cueSamples * 2 + speech.Length;

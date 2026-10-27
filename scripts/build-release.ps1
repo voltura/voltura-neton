@@ -1,5 +1,5 @@
 param(
-    [string]$Version = '1.0.3',
+    [string]$Version = '1.0.4',
     [string]$MakeNsis = 'C:\Program Files (x86)\NSIS\makensis.exe'
 )
 $ErrorActionPreference = 'Stop'

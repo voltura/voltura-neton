@@ -8,14 +8,16 @@ internal sealed class MainForm : Form
     private List<Adapter> snapshot = [];
     private readonly bool desktopFeatures;
     private readonly CancellationTokenSource lifetime = new();
-    private readonly Speech speech = new();
+    private readonly Speech speech;
     private readonly ComboBox adapters = new() { Name = "AdapterSelector", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Top, AccessibleName = "Network adapter" };
-    private readonly Label status = new() { AutoSize = true, Text = "Reading adapters…", Font = new Font("Segoe UI", 20, FontStyle.Bold), Margin = new Padding(0, 18, 0, 8) };
-    private readonly Label detail = new() { AutoSize = true, MaximumSize = new Size(490, 0), Margin = new Padding(0, 0, 0, 12) };
-    private readonly Label error = new() { Name = "ErrorMessage", AutoSize = true, MaximumSize = new Size(490, 0), ForeColor = Color.Firebrick };
-    private readonly Button turnOn = new() { Name = "TurnOn", Text = "Turn internet ON", AutoSize = true, Padding = new Padding(10, 6, 10, 6) };
-    private readonly Button turnOff = new() { Name = "TurnOff", Text = "Turn internet OFF", AutoSize = true, Padding = new Padding(10, 6, 10, 6) };
-    private readonly Button refresh = new() { Text = "Refresh", AutoSize = true };
+    private readonly Label status = new() { AutoSize = true, Text = "Checking…", Font = new Font("Segoe UI", 23, FontStyle.Regular), Margin = new Padding(0, 17, 0, 0) };
+    private readonly SwitchGlyph stateGlyph = new() { Margin = new Padding(0, 0, 4, 0), Size = new Size(90, 75) };
+    private readonly Label stateDescription = new() { AutoSize = true, MaximumSize = new Size(420, 0), Font = new Font("Segoe UI", 10), ForeColor = AppTheme.Muted, Margin = new Padding(0, 1, 0, 6) };
+    private readonly Label detail = new() { AutoSize = true, MaximumSize = new Size(420, 0), Font = new Font("Segoe UI", 9), ForeColor = AppTheme.Muted, Margin = new Padding(0, 10, 0, 7) };
+    private readonly Label error = new() { Name = "ErrorMessage", AutoSize = true, MaximumSize = new Size(420, 0), ForeColor = AppTheme.Red, Font = new Font("Segoe UI", 9) };
+    private readonly ModernButton turnOn = new() { Name = "TurnOn", Text = "Turn on", Accent = AppTheme.Green };
+    private readonly ModernButton turnOff = new() { Name = "TurnOff", Text = "Turn off", Accent = AppTheme.Red };
+    private readonly ModernButton refresh = new() { Text = "Refresh", Quiet = true };
     private readonly NotifyIcon tray;
     private readonly ToolStripMenuItem trayToggle = new("Toggle internet access");
     private readonly ToolStripMenuItem copyIp = new("Copy external IP");
@@ -31,6 +33,7 @@ internal sealed class MainForm : Form
     {
         this.service = service ?? new NetworkAdapters();
         preferences = settings ?? AppSettings.Load();
+        speech = new Speech(() => preferences.VoiceId);
         this.desktopFeatures = desktopFeatures;
         internetSwitch = new InternetSwitch(this.service, preferences, () => { if (desktopFeatures) preferences.Save(); });
         onIcon = StatusIcons.Create(true, preferences);
@@ -41,36 +44,72 @@ internal sealed class MainForm : Form
         Font = new Font("Segoe UI", 10);
         AutoScaleDimensions = new SizeF(96, 96);
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(570, 430);
-        MinimumSize = new Size(590, 470);
-        AutoSize = true;
-        AutoSizeMode = AutoSizeMode.GrowOnly;
+        ClientSize = new Size(820, 590);
+        MinimumSize = new Size(820, 610);
         StartPosition = FormStartPosition.CenterScreen;
-        BackColor = Color.FromArgb(246, 248, 251);
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(24), ColumnCount = 1, RowCount = 8 };
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int row = 0; row < 8; row++) layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.Controls.Add(new Label { Text = "ADAPTER DETAILS — ON / OFF CONTROLS ALL ADAPTERS", AutoSize = true, ForeColor = Color.DimGray });
-        layout.Controls.Add(adapters);
-        layout.Controls.Add(status);
-        layout.Controls.Add(detail);
-        var buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
+        BackColor = AppTheme.Paper;
+        ForeColor = AppTheme.Ink;
+        adapters.DrawMode = DrawMode.OwnerDrawFixed;
+        adapters.ItemHeight = 26;
+        adapters.FlatStyle = FlatStyle.Flat;
+        adapters.BackColor = AppTheme.Paper;
+        adapters.ForeColor = AppTheme.Ink;
+        adapters.DrawItem += (_, e) =>
+        {
+            bool selected = (e.State & DrawItemState.Selected) != 0;
+            using var fill = new SolidBrush(selected ? AppTheme.Green : AppTheme.Paper);
+            e.Graphics.FillRectangle(fill, e.Bounds);
+            string text = e.Index >= 0 && e.Index < adapters.Items.Count ? adapters.Items[e.Index]?.ToString() ?? "" : Selected?.Name ?? "Choose a connection";
+            var bounds = Rectangle.Inflate(e.Bounds, -8, 0);
+            TextRenderer.DrawText(e.Graphics, text, adapters.Font, bounds, selected ? Color.White : AppTheme.Ink, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            e.DrawFocusRectangle();
+        };
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(26), ColumnCount = 1, RowCount = 3 };
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 66));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 72));
+        var heading = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
+        var mark = new PictureBox { Image = StatusIcons.Draw(true, preferences, 128), SizeMode = PictureBoxSizeMode.Zoom, Size = new Size(48, 48), Margin = new Padding(0, 0, 10, 0) };
+        mark.Disposed += (_, _) => mark.Image?.Dispose();
+        heading.Controls.Add(mark);
+        heading.Controls.Add(new Label { Text = "NetOn", AutoSize = true, Font = new Font("Segoe UI", 25, FontStyle.Bold), Margin = new Padding(0, 0, 15, 0) });
+        heading.Controls.Add(new Label { Text = "by Voltura", AutoSize = true, ForeColor = AppTheme.Muted, Font = new Font("Segoe UI", 9), Margin = new Padding(0, 20, 0, 0) });
+        root.Controls.Add(heading, 0, 0);
+        var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
+        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36));
+        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 64));
+        body.Controls.Add(new ArtworkPanel(), 0, 0);
+        var content = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 9, Margin = new Padding(0, 3, 0, 0) };
+        content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        for (int row = 0; row < 9; row++) content.RowStyles.Add(new RowStyle(row == 8 ? SizeType.Percent : SizeType.AutoSize, row == 8 ? 100 : 0));
+        content.Controls.Add(new Label { Text = "YOUR INTERNET CONNECTION", ForeColor = AppTheme.Muted, Font = new Font("Segoe UI", 8, FontStyle.Bold), AutoSize = true, Margin = new Padding(0, 2, 0, 5) });
+        var stateRow = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = false, Margin = Padding.Empty };
+        stateRow.Controls.Add(stateGlyph);
+        stateRow.Controls.Add(status);
+        content.Controls.Add(stateRow);
+        content.Controls.Add(stateDescription);
+        var buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(0, 6, 0, 18) };
         buttons.Controls.AddRange([turnOn, turnOff]);
-        layout.Controls.Add(buttons);
-        layout.Controls.Add(new Label { Text = "OFF disables all network adapters, including Ethernet, Wi-Fi and Bluetooth. ON restores the adapters enabled before OFF. Left-click the tray icon to toggle internet access.", AutoSize = true, MaximumSize = new Size(490, 0), ForeColor = Color.DimGray, Margin = new Padding(0, 16, 0, 12) });
-        layout.Controls.Add(error);
-        var footer = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
-        var hide = new Button { Text = "Hide to tray", AutoSize = true };
-        var exit = new Button { Name = "Exit", Text = "Exit NetOn", AutoSize = true };
+        content.Controls.Add(buttons);
+        content.Controls.Add(new Label { Text = "CONNECTION DETAILS", AutoSize = true, Font = new Font("Segoe UI", 8, FontStyle.Bold), ForeColor = AppTheme.Muted, Margin = new Padding(0, 4, 0, 9) });
+        content.Controls.Add(adapters);
+        content.Controls.Add(detail);
+        content.Controls.Add(error);
+        content.Controls.Add(new Label { Text = "One click switches all connections.\nThe list above is just for a closer look.", AutoSize = true, ForeColor = AppTheme.Muted, Font = new Font("Segoe UI", 9), Margin = new Padding(0, 12, 0, 0) });
+        body.Controls.Add(content, 1, 0);
+        root.Controls.Add(body, 0, 1);
+        var footer = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(0, 16, 0, 0) };
+        var hide = new ModernButton { Text = "Hide to tray", Quiet = true };
+        var exit = new ModernButton { Name = "Exit", Text = "Exit NetOn", Quiet = true };
         footer.Controls.AddRange([refresh, hide, exit]);
-        layout.Controls.Add(footer);
-        Controls.Add(layout);
-
+        root.Controls.Add(footer, 0, 2);
+        Controls.Add(root);
         var menu = new ContextMenuStrip();
         menu.Items.Add("About NetOn", null, (_, _) =>
         {
             Say("NetOn by Voltura AB");
-            MessageBox.Show(this, "NetOn by Voltura AB\nVersion 1.0.3 • .NET 10\nhttps://github.com/voltura/voltura-neton\n\nFree for all.", "About NetOn", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, "NetOn by Voltura AB\nVersion 1.0.4\nhttps://voltura.github.io/voltura-neton/\n\nFree for all.", "About NetOn", MessageBoxButtons.OK, MessageBoxIcon.Information);
         });
         menu.Items.Add("Network adapters…", null, (_, _) => ShowWindow());
         menu.Items.Add(trayToggle);
@@ -98,6 +137,30 @@ internal sealed class MainForm : Form
         var mute = new ToolStripMenuItem("Mute all sounds") { Checked = preferences.MuteAllSounds };
         mute.Click += (_, _) => { preferences.MuteAllSounds = !preferences.MuteAllSounds; mute.Checked = preferences.MuteAllSounds; SavePreferences(); };
         settingsMenu.DropDownItems.Add(mute);
+        var voices = new ToolStripMenuItem("Voice");
+        var defaultVoice = new ToolStripMenuItem("Recommended") { Checked = preferences.VoiceId is null };
+        voices.DropDownItems.Add(defaultVoice);
+        defaultVoice.Click += (_, _) =>
+        {
+            preferences.VoiceId = null;
+            foreach (ToolStripMenuItem item in voices.DropDownItems) item.Checked = item == defaultVoice;
+            SavePreferences(); Say("NetOn by Voltura AB");
+        };
+        if (desktopFeatures)
+        {
+            foreach (var choice in Speech.ListVoices())
+            {
+                var item = new ToolStripMenuItem(choice.Name) { Checked = preferences.VoiceId == choice.Id };
+                item.Click += (_, _) =>
+                {
+                    preferences.VoiceId = choice.Id;
+                    foreach (ToolStripMenuItem option in voices.DropDownItems) option.Checked = option == item;
+                    SavePreferences(); Say("NetOn by Voltura AB");
+                };
+                voices.DropDownItems.Add(item);
+            }
+        }
+        settingsMenu.DropDownItems.Add(voices);
         menu.Items.Add(settingsMenu);
         menu.Items.Add(copyIp);
         menu.Items.Add(new ToolStripSeparator());
@@ -201,6 +264,8 @@ internal sealed class MainForm : Form
         Render();
         status.Text = enable ? "Turning on…" : "Turning off…";
         tray.Icon = Icon = unknownIcon;
+        stateGlyph.State = null;
+        stateDescription.Text = enable ? "Bringing your connections back…" : "Taking a little offline time…";
         tray.Text = enable ? "NetOn — turning internet ON" : "NetOn — turning internet OFF";
         error.Text = "";
         try
@@ -233,18 +298,21 @@ internal sealed class MainForm : Form
         trayToggle.Enabled = !changing && known;
         if (changing) return;
         bool? enabled = known ? anyEnabled : null;
+        stateGlyph.State = enabled;
         Icon icon = enabled switch { true => customOn ?? onIcon, false => customOff ?? offIcon, null => unknownIcon };
         tray.Icon = Icon = icon;
         if (!known)
         {
-            status.Text = hasSnapshot ? "Select an adapter" : "Status unavailable";
+            status.Text = "Checking…";
+            stateDescription.Text = "Refresh to check your connection.";
             status.ForeColor = Color.DimGray;
             detail.Text = hasSnapshot ? "Choose an adapter above. If none are listed, connect one and refresh." : "Refresh to read the adapter status.";
             tray.Text = "NetOn — status unavailable";
             return;
         }
-        status.Text = anyEnabled ? "Internet ON" : "Internet OFF";
-        status.ForeColor = anyEnabled ? Color.Green : Color.Firebrick;
+        status.Text = anyEnabled ? "Internet is on" : "Internet is off";
+        stateDescription.Text = anyEnabled ? "Ready when you are. Switch off for a little offline time." : "A little peace and quiet. Switch on when you're ready.";
+        status.ForeColor = anyEnabled ? AppTheme.Green : AppTheme.Red;
         detail.Text = Selected is { } adapter ? $"{adapter.Description}\n{adapter.Name}: {adapter.Status}\nEnabled adapters: {snapshot.Count(a => a.Enabled)} of {snapshot.Count}" : $"Enabled adapters: {snapshot.Count(a => a.Enabled)} of {snapshot.Count}";
         trayToggle.Text = $"Turn internet {(anyEnabled ? "OFF" : "ON")}";
         string tip = $"NetOn: Internet {(anyEnabled ? "ON" : "OFF")}";

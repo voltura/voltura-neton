@@ -24,6 +24,8 @@ The dropdown under **Network adapters…** selects the adapter whose details you
 
 The original speech announcements, mute setting, customizable icon colors, reset colors, start-with-Windows setting, external-IP tooltip/copying, About, and tray toggle are included. Speech begins with a quiet 1.2-second audible cue, followed by the complete phrase in the same audio stream. This wakes outputs that discard digital silence. An active phrase finishes before the latest pending announcement plays. The default ON background is green as requested, with red for OFF. Color settings are available for both states.
 
+The app window matches the installer artwork with a soft ivory background and green/red switch graphics. Tray and application icons have transparent backgrounds and multiple sizes for sharp rendering at different display scales. Under **Settings → Voice**, choose an installed Windows voice or the recommended option (Zira when available). Announcements use gentler pacing and an explicit “Voltuura, Aabe” pronunciation for Voltura AB; speech remains available offline.
+
 Windows requires administrator rights to change adapter state. The launcher requests elevation at startup; canceling that prompt exits without making network changes. The startup registration uses the launcher, which also requests elevation when launched at sign-in. There are no per-toggle elevation helpers.
 
 ON permits network access; it does not guarantee that a cable, Wi-Fi association, or internet service is available. A failed or partial OFF operation never displays the red OFF state while an adapter remains enabled. Status is refreshed periodically; if an adapter is enabled outside NetOn or new hardware appears, the indicator reflects the new state. Unknown status uses a gray question-mark icon.
@@ -48,7 +50,7 @@ Build release packages with [NSIS](https://nsis.sourceforge.io/) installed:
 .\scripts\verify-installer.ps1
 ```
 
-Release files are placed in `artifacts\release-1.0.3-framework`. The build creates a fresh framework-dependent payload, checks that runtime binaries are absent, builds the installer, and creates the portable ZIP. No checksum files are generated; GitHub provides asset digests.
+Release files are placed in `artifacts\release-1.0.4-framework`. The build creates a fresh framework-dependent payload, checks that runtime binaries are absent, builds the installer, and creates the portable ZIP. No checksum files are generated; GitHub provides asset digests.
 
 The installer is per-user and does not launch NetOn automatically. If .NET 10 Desktop Runtime x64 is missing, it downloads the current stable release from Microsoft's official metadata, checks its SHA-512 digest and Microsoft signature, requests elevation for Microsoft's installer, runs it without restarting Windows, rechecks the dependency, and continues. Download failure, cancellation, or failed component setup prevents a partial NetOn installation.
 

@@ -12,7 +12,7 @@ internal static class Program
         Application.SetCompatibleTextRenderingDefault(false);
         if (args.Length == 2 && args[0] == "--write-icon")
         {
-            using var icon = StatusIcons.Create(true, new AppSettings(), 256);
+            using var icon = StatusIcons.Create(true, new AppSettings());
             using var file = File.Create(args[1]);
             icon.Save(file);
             return 0;
@@ -22,15 +22,14 @@ internal static class Program
             RenderSpeech(args[1]);
             return 0;
         }
-        CheckLiveAdapters();
-        CheckIcons();
-        CheckInstances();
+        bool renderUi = args.Length == 2 && args[0] == "--render-ui";
+        if (!renderUi) { CheckLiveAdapters(); CheckIcons(); CheckInstances(); CheckPronunciation(); }
         using var context = new ApplicationContext();
         using var start = new System.Windows.Forms.Timer { Interval = 1 };
         start.Tick += async (_, _) =>
         {
             start.Stop();
-            try { await CheckFormAsync(); }
+            try { if (renderUi) await RenderUiAsync(args[1]); else await CheckFormAsync(); }
             catch (Exception ex) { failures++; Console.WriteLine("FAIL: " + ex); }
             finally { context.ExitThread(); }
         };
@@ -54,10 +53,19 @@ internal static class Program
         Require(found.Select(a => a.Id).Distinct().Count() == found.Count, "no duplicate filter interfaces in adapter list");
     }
 
+    private static void CheckPronunciation()
+    {
+        string markup = Speech.PronunciationMarkup("NetOn by Voltura AB & friends", true);
+        var document = System.Xml.Linq.XDocument.Parse("<root>" + markup + "</root>");
+        Require(document.Descendants("pron").Count() == 2, "company name and AB each have an explicit pronunciation");
+        Require(document.Root!.Value.Contains("VolturaAB & friends"), "speech text remains safely escaped around the company name");
+        Require(Speech.PronunciationMarkup("Voltura AB", false) == "Voltuura, Aabe", "non-English voices receive the requested spoken company name");
+    }
+
     private static void RenderSpeech(string directory)
     {
         Directory.CreateDirectory(directory);
-        foreach (string text in new[] { "Internet enabled", "Internet disabled" })
+        foreach (string text in new[] { "Internet enabled", "Internet disabled", "NetOn by Voltura AB" })
         {
             byte[] wave = Speech.RenderWave(text);
             File.WriteAllBytes(Path.Combine(directory, text.Replace(' ', '-') + ".wav"), wave);
@@ -79,11 +87,44 @@ internal static class Program
         var settings = new AppSettings();
         using var on = StatusIcons.Draw(true, settings, 64);
         using var off = StatusIcons.Draw(false, settings, 64);
-        Require(on.GetPixel(5, 5).ToArgb() == Color.Green.ToArgb(), "ON icon is green");
-        Require(off.GetPixel(5, 5).ToArgb() == Color.Red.ToArgb(), "OFF icon is red");
+        Require(IsStateColor(on, true), "ON icon is green");
+        Require(IsStateColor(off, false), "OFF icon is red");
+        Require(on.GetPixel(0, 0).A == 0 && off.GetPixel(0, 0).A == 0, "toggle icons have transparent corners");
         using var icon = StatusIcons.Create(true, settings);
         using var bitmap = icon.ToBitmap();
-        Require(bitmap.GetPixel(5, 5).ToArgb() == Color.Green.ToArgb(), "owned tray icon retains its color after native handle cleanup");
+        Require(IsStateColor(bitmap, true), "multi-resolution tray icon retains its color");
+        foreach (int size in new[] { 16, 20, 24, 32, 48, 64, 128, 256 })
+        {
+            using var smallOn = StatusIcons.Draw(true, settings, size);
+            using var smallOff = StatusIcons.Draw(false, settings, size);
+            Require(IsStateColor(smallOn, true) && IsStateColor(smallOff, false), $"green/red toggle colors remain distinct at {size}px");
+        }
+    }
+
+    private static bool IsStateColor(Bitmap image, bool enabled)
+    {
+        Color sample = image.GetPixel((int)(image.Width * (enabled ? .2 : .8)), image.Height / 2);
+        return sample.A > 200 && (enabled ? sample.G > sample.R * 1.3 && sample.G > sample.B * 1.15 : sample.R > sample.G * 1.3 && sample.R > sample.B * 1.3);
+    }
+
+    private static async Task RenderUiAsync(string directory)
+    {
+        Directory.CreateDirectory(directory);
+        var service = new FakeService { Snapshot = [new Adapter("Ethernet", Guid.NewGuid(), "Intel Ethernet Controller", "Connected", 1), new Adapter("Wi-Fi", Guid.NewGuid(), "Wireless network adapter", "Disconnected", 1)] };
+        using var form = new MainForm(service, new AppSettings { MuteAllSounds = true }, false);
+        _ = form.Handle;
+        void Prepare(System.Windows.Forms.Control control) { _ = control.Handle; control.PerformLayout(); foreach (System.Windows.Forms.Control child in control.Controls) Prepare(child); }
+        Prepare(form);
+        await form.RefreshAsync();
+        Prepare(form);
+        using (var on = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(on, new Rectangle(Point.Empty, form.Size)); on.Save(Path.Combine(directory, "neton-app-on.png")); }
+        await form.ChangeAsync(false);
+        Prepare(form);
+        using (var off = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(off, new Rectangle(Point.Empty, form.Size)); off.Save(Path.Combine(directory, "neton-app-off.png")); }
+        using var onIcon = StatusIcons.Draw(true, new AppSettings(), 128);
+        using var offIcon = StatusIcons.Draw(false, new AppSettings(), 128);
+        onIcon.Save(Path.Combine(directory, "icon-on.png")); offIcon.Save(Path.Combine(directory, "icon-off.png"));
+        Console.WriteLine($"Rendered hidden app previews at {form.ClientSize.Width}×{form.ClientSize.Height}, DPI={form.DeviceDpi}");
     }
 
     private static void CheckInstances()
@@ -146,17 +187,17 @@ internal static class Program
         Require(service.LastIds.ToHashSet().SetEquals([ethernet.Id, wifi.Id]), "OFF targets both Ethernet and Wi-Fi regardless of the dropdown selection");
         Require(service.Snapshot.All(a => !a.Enabled), "OFF disables every enabled adapter");
         Require(Control<Button>(form, "TurnOn").Enabled && !Control<Button>(form, "TurnOff").Enabled, "successful OFF switches the controls to allow ON");
-        using (var red = form.Icon!.ToBitmap()) Require(red.GetPixel(5, 5).ToArgb() == Color.Red.ToArgb(), "successful OFF switches the displayed icon to red");
+        using (var red = form.Icon!.ToBitmap()) Require(IsStateColor(red, false), "successful OFF switches the displayed icon to red");
         await form.ChangeAsync(true);
         Require(service.Snapshot.Single(a => a.Id == spare.Id).Enabled == false, "ON leaves previously disabled adapters disabled");
         Require(service.LastIds.ToHashSet().SetEquals([ethernet.Id, wifi.Id]), "ON restores exactly the previously enabled adapters");
         Require(Control<Button>(form, "TurnOff").Enabled && !Control<Button>(form, "TurnOn").Enabled, "successful ON switches the controls to allow OFF");
-        using (var green = form.Icon!.ToBitmap()) Require(green.GetPixel(5, 5).ToArgb() == Color.Green.ToArgb(), "successful ON switches the displayed icon to green");
+        using (var green = form.Icon!.ToBitmap()) Require(IsStateColor(green, true), "successful ON switches the displayed icon to green");
 
         service.IgnoreId = wifi.Id;
         await form.ChangeAsync(false);
         Require(Control<Button>(form, "TurnOff").Enabled, "if Wi-Fi remains enabled, OFF can be retried");
-        using (var stillOn = form.Icon!.ToBitmap()) Require(stillOn.GetPixel(5, 5).ToArgb() == Color.Green.ToArgb(), "a partial disable never displays a red OFF icon");
+        using (var stillOn = form.Icon!.ToBitmap()) Require(IsStateColor(stillOn, true), "a partial disable never displays a red OFF icon");
         Require(Control<Label>(form, "ErrorMessage").Text.Contains("still enabled"), "partial disable explains that internet is not OFF");
         service.IgnoreId = null;
         await form.ChangeAsync(true);

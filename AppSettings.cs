@@ -9,9 +9,10 @@ internal sealed class AppSettings
     public List<Guid> RestoreAdapterIds { get; set; } = [];
     public bool OffRequested { get; set; }
     public bool MuteAllSounds { get; set; }
-    public int OnBackground { get; set; } = Color.Green.ToArgb();
+    public string? VoiceId { get; set; }
+    public int OnBackground { get; set; } = AppTheme.Green.ToArgb();
     public int OnForeground { get; set; } = Color.White.ToArgb();
-    public int OffBackground { get; set; } = Color.Red.ToArgb();
+    public int OffBackground { get; set; } = AppTheme.Red.ToArgb();
     public int OffForeground { get; set; } = Color.White.ToArgb();
     public static string DirectoryPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Voltura", "NetOn");
     private static string FilePath => Path.Combine(DirectoryPath, "preferences.json");
