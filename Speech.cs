@@ -15,7 +15,8 @@ internal sealed class Speech : IDisposable
     public Speech(Func<string?>? preferredVoice = null, Func<IWavePlayer>? createOutput = null)
     {
         this.preferredVoice = preferredVoice ?? (() => null);
-        this.createOutput = createOutput ?? (() => new WaveOutEvent { DesiredLatency = 150, NumberOfBuffers = 3 });
+        // NAudio 3 sizes each buffer individually: three 50 ms buffers retain 150 ms total.
+        this.createOutput = createOutput ?? (() => new WaveOut { BufferMilliseconds = 50, NumberOfBuffers = 3 });
     }
     internal const int SampleRate = 22050;
     private readonly BlockingCollection<string> pending = new(1);

@@ -1,5 +1,5 @@
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.0.9',
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.0.10',
     [string]$MakeNsis = 'C:\Program Files (x86)\NSIS\makensis.exe'
 )
 $ErrorActionPreference = 'Stop'

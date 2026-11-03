@@ -11,6 +11,23 @@ internal static class Program
         Application.SetHighDpiMode(args.Contains("--dpi-unaware") ? HighDpiMode.DpiUnaware : HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+        if (args.Contains("--check-audio-output"))
+        {
+            using var output = new NAudio.Wave.WaveOut { BufferMilliseconds = 50, NumberOfBuffers = 3 };
+            var source = new AnnouncementAudio();
+            output.Init(source);
+            output.Play();
+            Thread.Sleep(500);
+            long first = output.GetPosition();
+            Require(first > 0 && output.PlaybackState == NAudio.Wave.PlaybackState.Playing, "WinMM reads the span provider and advances the hardware byte position");
+            source.Play(new byte[Speech.SampleRate / 5 * 2]);
+            var deadline = DateTime.UtcNow.AddSeconds(3);
+            while (DateTime.UtcNow < deadline && !(source.EndPosition is long end && output.GetPosition() >= end)) Thread.Sleep(25);
+            Require(source.EndPosition is long completed && output.GetPosition() >= completed, "WinMM plays a silent clip through its final sample");
+            Require(output.GetPosition() > first && output.PlaybackState == NAudio.Wave.PlaybackState.Playing, "WinMM keeps the output open between clips");
+            output.Stop();
+            return 0;
+        }
         if (args.Length == 2 && args[0] == "--write-icon")
         {
             using var icon = StatusIcons.Create(true, new AppSettings());
@@ -63,8 +80,9 @@ internal static class Program
             Require(pcm.Length > Speech.SampleRate && wave.AsSpan(44).SequenceEqual(pcm), "offline recorded voice is used for: " + phrase);
         }
         var source = new AnnouncementAudio();
+        Require(source.Read(Span<byte>.Empty) == 0 && source.EndPosition is null, "empty audio buffers leave the stream unchanged");
         var idle = new byte[200];
-        Require(source.Read(idle, 0, idle.Length) == idle.Length, "audio output stays open while idle");
+        Require(source.Read(idle) == idle.Length, "audio output stays open while idle");
         byte[] clip = RecordedVoice.ReadPcm("Internet enabled")!;
         source.Play(clip);
         var collected = new List<byte>();
@@ -72,14 +90,14 @@ internal static class Program
         while (source.EndPosition is null)
         {
             Array.Fill(block, (byte)99);
-            if (source.Read(block, 6, 500) != 500 || block[0] != 99 || block[511] != 99) throw new Exception("stream overwrote requested buffer bounds");
+            if (source.Read(block.AsSpan(6, 500)) != 500 || block.Take(6).Any(value => value != 99) || block.Skip(506).Any(value => value != 99)) throw new Exception("stream overwrote requested buffer bounds");
             collected.AddRange(block.AsSpan(6, 500).ToArray());
         }
         Require(collected.Take(clip.Length).SequenceEqual(clip), "stream delivers first through last recording sample unchanged across buffer boundaries");
         Require(source.EndPosition == 200 + clip.Length, "completion tracks the final sample for hardware playback confirmation");
         source.Play(clip);
         source.Clear();
-        source.Read(idle, 0, idle.Length);
+        source.Read(idle);
         Require(source.EndPosition is null && idle[0] == 1 && idle[1] == 0, "mute clears queued speech and leaves only inaudible idle samples");
         string markup = Speech.PronunciationMarkup("NetOn by Voltura AB & friends", true);
         var document = System.Xml.Linq.XDocument.Parse("<root>" + markup + "</root>");
