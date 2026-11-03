@@ -24,6 +24,6 @@
     <EmbeddedResource Include="assets/voice/*.wav" LogicalName="Voltura.NetOn.Voice.%(Filename)%(Extension)" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="NAudio.WinMM" Version="2.3.0" />
+    <PackageReference Include="NAudio.WinMM" Version="3.3.0" />
   </ItemGroup>
 </Project>
