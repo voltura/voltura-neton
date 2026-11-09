@@ -17,6 +17,7 @@ internal static class ReviewChecks
         await CheckStaleUiAsync();
         CheckSettingsFailures();
         await CheckCopyAndBrowserAsync();
+        await CheckHiddenTrayRefreshAsync();
         CheckErrorLayout();
         CheckAudioShutdown();
         Check(Speech.RenderWave("Internet enabled", "removed-voice").AsSpan(44).SequenceEqual(RecordedVoice.ReadPcm("Internet enabled")),
@@ -67,6 +68,31 @@ internal static class ReviewChecks
         using var link = new LinkLabel { Text = "Visit the NetOn website" };
         AboutForm.OpenWebsite(link, () => throw new System.ComponentModel.Win32Exception("No default browser"));
         Check(link.Text.Contains("neton.voltura.se"), "a browser-launch failure leaves a usable website address without crashing About");
+    }
+
+    private static async Task CheckHiddenTrayRefreshAsync()
+    {
+        int reads = 0;
+        int lookups = 0;
+        var service = new ReviewService
+        {
+            Snapshot = [new Adapter("Ethernet", Guid.NewGuid(), "Test", "Connected", 1)],
+            ReadAction = () => reads++
+        };
+        using var form = new MainForm(service, new AppSettings { MuteAllSounds = true }, true,
+            _ => Task.FromResult(++lookups == 1 ? "203.0.113.20" : "203.0.113.21"));
+        _ = form.Handle;
+        await form.RefreshAsync();
+
+        var tray = (NotifyIcon)typeof(MainForm).GetField("tray", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+        var refreshStatus = (ToolStripMenuItem)tray.ContextMenuStrip!.Items.Cast<ToolStripItem>()
+            .Single(item => item.Text == "Refresh status");
+        Check(tray.Visible && !form.Visible, "tray refresh is available with the main window hidden");
+        refreshStatus.PerformClick();
+
+        Check(reads == 2 && lookups == 2 && Find<Label>(form, "ExternalIp").Text.Contains("203.0.113.21"),
+            "tray refresh rereads adapters and updates the external IP");
+        Check(!form.Visible && service.SetCalls == 0, "tray refresh leaves the window hidden and adapters untouched");
     }
 
     private static void CheckAudioShutdown()

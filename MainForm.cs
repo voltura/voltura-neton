@@ -237,6 +237,7 @@ internal sealed class MainForm : Form
         }
         settingsMenu.DropDownItems.Add(themeMenu);
         menu.Items.Add(settingsMenu);
+        menu.Items.Add("Refresh status", null, RefreshStatus);
         menu.Items.Add(copyIp);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(aboutMenuItem);
@@ -250,7 +251,7 @@ internal sealed class MainForm : Form
         stateGlyph.Click += async (_, _) => await ToggleAsync();
         turnOn.Click += async (_, _) => await ChangeAsync(true);
         turnOff.Click += async (_, _) => await ChangeAsync(false);
-        refresh.Click += async (_, _) => { await RefreshAsync(clearErrors: true); if (desktopFeatures) await ReadExternalIpAsync(); };
+        refresh.Click += RefreshStatus;
         hide.Click += (_, _) => Hide();
         exit.Click += (_, _) => ExitApp();
         adapters.SelectedIndexChanged += (_, _) =>
@@ -324,6 +325,12 @@ internal sealed class MainForm : Form
     {
         if (WindowState != FormWindowState.Minimized) restoreState = WindowState;
         base.OnResize(e);
+    }
+
+    private async void RefreshStatus(object? sender, EventArgs e)
+    {
+        await RefreshAsync(clearErrors: true);
+        if (desktopFeatures) await ReadExternalIpAsync();
     }
 
     internal async Task RefreshAsync(bool clearErrors = false)

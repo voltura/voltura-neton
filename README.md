@@ -18,6 +18,7 @@ For Windows 10 and 11 (64-bit).
 - **Right-click** for the Internet switch, scheduling, settings, and **Open NetOn**.
 - **Green** means network connections are enabled. **Red** means all detected network connections are disabled. **Gray** means the status is unavailable.
 - **Open NetOn** shows the main window, with a clickable switch, external IP address, and copy button.
+- **Refresh status** in the tray menu checks adapter status and refreshes the external IP while the main window stays hidden.
 - **Show connection details** expands the adapter dropdown and status information. The window opens with these details hidden.
 
 OFF disables the PC's network connections, including Ethernet and Wi-Fi. ON restores the connections that were enabled before OFF. An enabled connection still needs an available network and internet service.
