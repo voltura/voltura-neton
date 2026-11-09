@@ -1,9 +1,11 @@
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.0.10',
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.0.11',
     [string]$MakeNsis = 'C:\Program Files (x86)\NSIS\makensis.exe'
 )
 $ErrorActionPreference = 'Stop'
 $netonRoot = Split-Path -Parent $PSScriptRoot
+$signingConfig = Join-Path $PSScriptRoot 'signing.json'
+& (Join-Path $PSScriptRoot 'sign-installer.ps1') -SigningConfig $signingConfig -Path 'preflight.exe' -ValidateOnly
 $releaseRoot = Join-Path $netonRoot "artifacts\release-$Version-framework"
 $payload = Join-Path $releaseRoot ('app-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $payload -Force | Out-Null
@@ -46,6 +48,7 @@ $uninstallLines | Set-Content -LiteralPath $uninstallManifest -Encoding utf8
 $installer = Join-Path $releaseRoot "Voltura-NetOn-$Version-Setup-win-x64.exe"
 & $MakeNsis /V2 "/DAPP_VERSION=$Version" "/DOUTPUT_FILE=$installer" "/DINSTALL_FILES=$installManifest" "/DUNINSTALL_FILES=$uninstallManifest" (Join-Path $netonRoot 'installer\NetOn.nsi')
 if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
+& (Join-Path $PSScriptRoot 'sign-installer.ps1') -SigningConfig $signingConfig -Path $installer
 $zip = Join-Path $releaseRoot "Voltura-NetOn-$Version-win-x64.zip"
 Compress-Archive -Path (Join-Path $payload '*') -DestinationPath $zip -CompressionLevel Optimal -Force
 [pscustomobject]@{ Installer = $installer; Zip = $zip; Payload = $payload; InstallManifest = $installManifest; UninstallManifest = $uninstallManifest } | ConvertTo-Json

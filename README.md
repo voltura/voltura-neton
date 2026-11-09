@@ -43,3 +43,7 @@ Open **Settings** from the main window or tray menu to choose:
 Closing the main window hides it to the tray. Choose **Exit NetOn** from the tray menu or main window to close the app.
 
 Exiting leaves network connections in their current state. If they are off, open NetOn and turn them on to restore them.
+
+## Building a release
+
+Run `pwsh -File scripts/build-release.ps1` on Windows with .NET 10, NSIS, Windows SDK SignTool, and the Voltura AB code-signing certificate and private key in the current user's certificate store. The build signs and timestamps the setup executable and fails if verification fails. The certificate is self-signed, so Windows may still show an unknown publisher on computers that do not trust it. The private key is not stored in this repository.
