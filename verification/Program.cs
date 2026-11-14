@@ -431,7 +431,8 @@ internal static class Program
             int changed = 0;
             using var settings = new SettingsForm(preferences, [new Speech.VoiceChoice("test", "Test voice")], false, _ => { }, () => { AppTheme.Set(preferences.Theme); changed++; }, (_, _) => { }, () => { });
             Prepare(settings);
-            CheckSettingsLayout(settings, false);
+            CheckSettingsLayout(settings);
+            changed = 0;
             var voice = (ComboBox)settings.Controls.Find("VoiceSetting", true).Single();
             var appearance = (ComboBox)settings.Controls.Find("ThemeSetting", true).Single();
             Require(settings.BackColor == AppTheme.Paper && voice.SelectedItem!.ToString() == "Recorded voice - English", $"{theme} Settings window is themed and labels recorded English voice correctly");
@@ -458,7 +459,7 @@ internal static class Program
         form.ApplyTheme();
     }
 
-    private static void CheckSettingsLayout(SettingsForm settings, bool paintStates = true)
+    private static void CheckSettingsLayout(SettingsForm settings)
     {
         void Prepare(System.Windows.Forms.Control c) { _ = c.Handle; c.PerformLayout(); foreach (System.Windows.Forms.Control child in c.Controls) Prepare(child); }
         foreach (Size size in new[] { settings.ClientSize, new Size((int)(520 * settings.DeviceDpi / 96f), (int)(460 * settings.DeviceDpi / 96f)) })
@@ -473,7 +474,6 @@ internal static class Program
             settings.ClientSize = original;
             Prepare(settings);
         }
-        if (!paintStates) return;
         foreach (string name in new[] { "StartupSetting", "MuteSetting" })
         {
             var check = (ThemedCheckBox)settings.Controls.Find(name, true).Single();
@@ -482,8 +482,16 @@ internal static class Program
             {
                 check.Checked = value;
                 using var image = new Bitmap(check.Width, check.Height);
-                check.DrawToBitmap(image, check.ClientRectangle);
-                int x = (int)(4 * check.DeviceDpi / 96f), y = check.Height / 2;
+                using (var graphics = Graphics.FromImage(image))
+                {
+                    // The opaque on-screen paint buffer may contain pixels from another control.
+                    graphics.Clear(Color.Magenta);
+                    using var paint = new PaintEventArgs(graphics, check.ClientRectangle);
+                    typeof(ThemedCheckBox).GetMethod("OnPaint", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(check, [paint]);
+                }
+                Require(image.GetPixel(0, 0).ToArgb() == check.BackColor.ToArgb()
+                    && image.GetPixel(image.Width - 1, image.Height - 1).ToArgb() == check.BackColor.ToArgb(),
+                    $"{name} clears its paint buffer, checked={value}");
                 Color expected = value ? AppTheme.Green : AppTheme.Surface;
                 int matching = 0;
                 for (int px = 0; px < Math.Min(image.Width, (int)Math.Ceiling(18 * check.DeviceDpi / 96f)); px++)

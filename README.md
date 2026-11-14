@@ -4,6 +4,8 @@ Turn your PC's internet access on or off from the icon next to the clock.
 
 **[Website](https://neton.voltura.se/)** · **[Download for Windows](https://github.com/voltura/voltura-neton/releases/latest)**
 
+[Version 1.0.13](https://github.com/voltura/voltura-neton/releases/tag/v1.0.13) fixes overlapping checkbox labels and black backgrounds in Settings at high display scaling.
+
 ## Install
 
 For Windows 10 and 11 (64-bit).
@@ -38,6 +40,8 @@ Open **Settings** from the main window or tray menu to choose:
 - Mute all sounds.
 - Start with Windows.
 - Colors for the on and off icons.
+
+Changes are saved automatically.
 
 ## Close NetOn
 
